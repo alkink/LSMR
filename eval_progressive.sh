@@ -1,0 +1,32 @@
+#!/bin/bash
+# Parametrik CULane evaluation — progressive scaling için
+# Kullanım: bash eval_progressive.sh <config_name> <iter>
+# Örnek:    bash eval_progressive.sh LSTR_CULANE_100_baseline 800
+
+CONFIG=${1:-"LSTR_CULANE_100_baseline"}
+ITER=${2:-"800"}
+
+root="../results/${CONFIG}"
+data_dir="../../CULane/"
+split="testing"
+detect_dir="${root}/${ITER}/${split}"
+w_lane=30
+iou=0.5
+im_w=1640
+im_h=590
+frame=1
+list="${data_dir}list/test.txt"
+out="${root}/${ITER}_iou${iou}.txt"
+
+echo "Config    : ${CONFIG}"
+echo "Iteration : ${ITER}"
+echo "detect_dir: ${detect_dir}"
+echo "Output    : ${out}"
+echo ""
+
+cd lane_evaluation_main
+./evaluate -a $data_dir -d $detect_dir -i $data_dir -l $list -w $w_lane -t $iou -c $im_w -r $im_h -f $frame -o $out
+
+echo ""
+echo "F1 sonucu: ${out}"
+cat "${out}"

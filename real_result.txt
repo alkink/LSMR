@@ -1,0 +1,416 @@
+(clrernet) alki@alki:~/projects/LSTR$ conda activate clrernet && python transformer_real_analysis.py
+
+================================================================================
+BÖLÜM 1.1: PARAMETRE HARİTASI
+================================================================================
+  conv1.weight                                                 | [16, 3, 7, 7]             | TRAINABLE
+  layer1.0.conv1.weight                                        | [16, 16, 3, 3]            | TRAINABLE
+  layer1.0.bn1.weight                                          | [16]                      | TRAINABLE
+  layer1.0.bn1.bias                                            | [16]                      | TRAINABLE
+  layer1.0.conv2.weight                                        | [16, 16, 3, 3]            | TRAINABLE
+  layer1.0.bn2.weight                                          | [16]                      | TRAINABLE
+  layer1.0.bn2.bias                                            | [16]                      | TRAINABLE
+  layer2.0.conv1.weight                                        | [32, 16, 3, 3]            | TRAINABLE
+  layer2.0.bn1.weight                                          | [32]                      | TRAINABLE
+  layer2.0.bn1.bias                                            | [32]                      | TRAINABLE
+  layer2.0.conv2.weight                                        | [32, 32, 3, 3]            | TRAINABLE
+  layer2.0.bn2.weight                                          | [32]                      | TRAINABLE
+  layer2.0.bn2.bias                                            | [32]                      | TRAINABLE
+  layer2.0.downsample.0.weight                                 | [32, 16, 1, 1]            | TRAINABLE
+  layer2.0.downsample.1.weight                                 | [32]                      | TRAINABLE
+  layer2.0.downsample.1.bias                                   | [32]                      | TRAINABLE
+  layer2.1.conv1.weight                                        | [32, 32, 3, 3]            | TRAINABLE
+  layer2.1.bn1.weight                                          | [32]                      | TRAINABLE
+  layer2.1.bn1.bias                                            | [32]                      | TRAINABLE
+  layer2.1.conv2.weight                                        | [32, 32, 3, 3]            | TRAINABLE
+  layer2.1.bn2.weight                                          | [32]                      | TRAINABLE
+  layer2.1.bn2.bias                                            | [32]                      | TRAINABLE
+  layer3.0.conv1.weight                                        | [64, 32, 3, 3]            | TRAINABLE
+  layer3.0.bn1.weight                                          | [64]                      | TRAINABLE
+  layer3.0.bn1.bias                                            | [64]                      | TRAINABLE
+  layer3.0.conv2.weight                                        | [64, 64, 3, 3]            | TRAINABLE
+  layer3.0.bn2.weight                                          | [64]                      | TRAINABLE
+  layer3.0.bn2.bias                                            | [64]                      | TRAINABLE
+  layer3.0.downsample.0.weight                                 | [64, 32, 1, 1]            | TRAINABLE
+  layer3.0.downsample.1.weight                                 | [64]                      | TRAINABLE
+  layer3.0.downsample.1.bias                                   | [64]                      | TRAINABLE
+  layer3.1.conv1.weight                                        | [64, 64, 3, 3]            | TRAINABLE
+  layer3.1.bn1.weight                                          | [64]                      | TRAINABLE
+  layer3.1.bn1.bias                                            | [64]                      | TRAINABLE
+  layer3.1.conv2.weight                                        | [64, 64, 3, 3]            | TRAINABLE
+  layer3.1.bn2.weight                                          | [64]                      | TRAINABLE
+  layer3.1.bn2.bias                                            | [64]                      | TRAINABLE
+  layer4.0.conv1.weight                                        | [128, 64, 3, 3]           | TRAINABLE
+  layer4.0.bn1.weight                                          | [128]                     | TRAINABLE
+  layer4.0.bn1.bias                                            | [128]                     | TRAINABLE
+  layer4.0.conv2.weight                                        | [128, 128, 3, 3]          | TRAINABLE
+  layer4.0.bn2.weight                                          | [128]                     | TRAINABLE
+  layer4.0.bn2.bias                                            | [128]                     | TRAINABLE
+  layer4.0.downsample.0.weight                                 | [128, 64, 1, 1]           | TRAINABLE
+  layer4.0.downsample.1.weight                                 | [128]                     | TRAINABLE
+  layer4.0.downsample.1.bias                                   | [128]                     | TRAINABLE
+  layer4.1.conv1.weight                                        | [128, 128, 3, 3]          | TRAINABLE
+  layer4.1.bn1.weight                                          | [128]                     | TRAINABLE
+  layer4.1.bn1.bias                                            | [128]                     | TRAINABLE
+  layer4.1.conv2.weight                                        | [128, 128, 3, 3]          | TRAINABLE
+  layer4.1.bn2.weight                                          | [128]                     | TRAINABLE
+  layer4.1.bn2.bias                                            | [128]                     | TRAINABLE
+  query_embed.weight                                           | [7, 32]                   | TRAINABLE
+  input_proj.weight                                            | [32, 128, 1, 1]           | TRAINABLE
+  input_proj.bias                                              | [32]                      | TRAINABLE
+  transformer.encoder.layers.0.self_attn.in_proj_weight        | [96, 32]                  | TRAINABLE
+  transformer.encoder.layers.0.self_attn.in_proj_bias          | [96]                      | TRAINABLE
+  transformer.encoder.layers.0.self_attn.out_proj.weight       | [32, 32]                  | TRAINABLE
+  transformer.encoder.layers.0.self_attn.out_proj.bias         | [32]                      | TRAINABLE
+  transformer.encoder.layers.0.linear1.weight                  | [128, 32]                 | TRAINABLE
+  transformer.encoder.layers.0.linear1.bias                    | [128]                     | TRAINABLE
+  transformer.encoder.layers.0.linear2.weight                  | [32, 128]                 | TRAINABLE
+  transformer.encoder.layers.0.linear2.bias                    | [32]                      | TRAINABLE
+  transformer.encoder.layers.0.norm1.weight                    | [32]                      | TRAINABLE
+  transformer.encoder.layers.0.norm1.bias                      | [32]                      | TRAINABLE
+  transformer.encoder.layers.0.norm2.weight                    | [32]                      | TRAINABLE
+  transformer.encoder.layers.0.norm2.bias                      | [32]                      | TRAINABLE
+  transformer.encoder.layers.1.self_attn.in_proj_weight        | [96, 32]                  | TRAINABLE
+  transformer.encoder.layers.1.self_attn.in_proj_bias          | [96]                      | TRAINABLE
+  transformer.encoder.layers.1.self_attn.out_proj.weight       | [32, 32]                  | TRAINABLE
+  transformer.encoder.layers.1.self_attn.out_proj.bias         | [32]                      | TRAINABLE
+  transformer.encoder.layers.1.linear1.weight                  | [128, 32]                 | TRAINABLE
+  transformer.encoder.layers.1.linear1.bias                    | [128]                     | TRAINABLE
+  transformer.encoder.layers.1.linear2.weight                  | [32, 128]                 | TRAINABLE
+  transformer.encoder.layers.1.linear2.bias                    | [32]                      | TRAINABLE
+  transformer.encoder.layers.1.norm1.weight                    | [32]                      | TRAINABLE
+  transformer.encoder.layers.1.norm1.bias                      | [32]                      | TRAINABLE
+  transformer.encoder.layers.1.norm2.weight                    | [32]                      | TRAINABLE
+  transformer.encoder.layers.1.norm2.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.self_attn.in_proj_weight        | [96, 32]                  | TRAINABLE
+  transformer.decoder.layers.0.self_attn.in_proj_bias          | [96]                      | TRAINABLE
+  transformer.decoder.layers.0.self_attn.out_proj.weight       | [32, 32]                  | TRAINABLE
+  transformer.decoder.layers.0.self_attn.out_proj.bias         | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.multihead_attn.in_proj_weight   | [96, 32]                  | TRAINABLE
+  transformer.decoder.layers.0.multihead_attn.in_proj_bias     | [96]                      | TRAINABLE
+  transformer.decoder.layers.0.multihead_attn.out_proj.weight  | [32, 32]                  | TRAINABLE
+  transformer.decoder.layers.0.multihead_attn.out_proj.bias    | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.linear1.weight                  | [128, 32]                 | TRAINABLE
+  transformer.decoder.layers.0.linear1.bias                    | [128]                     | TRAINABLE
+  transformer.decoder.layers.0.linear2.weight                  | [32, 128]                 | TRAINABLE
+  transformer.decoder.layers.0.linear2.bias                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.norm1.weight                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.norm1.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.norm2.weight                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.norm2.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.norm3.weight                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.0.norm3.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.self_attn.in_proj_weight        | [96, 32]                  | TRAINABLE
+  transformer.decoder.layers.1.self_attn.in_proj_bias          | [96]                      | TRAINABLE
+  transformer.decoder.layers.1.self_attn.out_proj.weight       | [32, 32]                  | TRAINABLE
+  transformer.decoder.layers.1.self_attn.out_proj.bias         | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.multihead_attn.in_proj_weight   | [96, 32]                  | TRAINABLE
+  transformer.decoder.layers.1.multihead_attn.in_proj_bias     | [96]                      | TRAINABLE
+  transformer.decoder.layers.1.multihead_attn.out_proj.weight  | [32, 32]                  | TRAINABLE
+  transformer.decoder.layers.1.multihead_attn.out_proj.bias    | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.linear1.weight                  | [128, 32]                 | TRAINABLE
+  transformer.decoder.layers.1.linear1.bias                    | [128]                     | TRAINABLE
+  transformer.decoder.layers.1.linear2.weight                  | [32, 128]                 | TRAINABLE
+  transformer.decoder.layers.1.linear2.bias                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.norm1.weight                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.norm1.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.norm2.weight                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.norm2.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.norm3.weight                    | [32]                      | TRAINABLE
+  transformer.decoder.layers.1.norm3.bias                      | [32]                      | TRAINABLE
+  transformer.decoder.norm.weight                              | [32]                      | TRAINABLE
+  transformer.decoder.norm.bias                                | [32]                      | TRAINABLE
+  class_embed.weight                                           | [3, 32]                   | TRAINABLE
+  class_embed.bias                                             | [3]                       | TRAINABLE
+  specific_embed.layers.0.weight                               | [32, 32]                  | TRAINABLE
+  specific_embed.layers.0.bias                                 | [32]                      | TRAINABLE
+  specific_embed.layers.1.weight                               | [32, 32]                  | TRAINABLE
+  specific_embed.layers.1.bias                                 | [32]                      | TRAINABLE
+  specific_embed.layers.2.weight                               | [4, 32]                   | TRAINABLE
+  specific_embed.layers.2.bias                                 | [4]                       | TRAINABLE
+  shared_embed.layers.0.weight                                 | [32, 32]                  | TRAINABLE
+  shared_embed.layers.0.bias                                   | [32]                      | TRAINABLE
+  shared_embed.layers.1.weight                                 | [32, 32]                  | TRAINABLE
+  shared_embed.layers.1.bias                                   | [32]                      | TRAINABLE
+  shared_embed.layers.2.weight                                 | [4, 32]                   | TRAINABLE
+  shared_embed.layers.2.bias                                   | [4]                       | TRAINABLE
+
+Toplam  : 765,787
+Frozen  : 0 (0.0%)
+Trainable: 765,787
+✅ Frozen = yalnızca BatchNorm — beklenen
+  → KAYIT [✅ PASS] Frozen param sadece BN (kasıtlı):
+
+================================================================================
+BÖLÜM 1.2: FORWARD PASS BOYUT HARİTASI
+================================================================================
+
+[layer1]
+  shape: [1, 16, 90, 160]
+  mean: 0.855
+  std: 0.3727
+  has_nan: False
+  has_inf: False
+  ✅ Boyut doğru
+
+[layer4]
+  shape: [1, 128, 12, 20]
+  mean: 0.0342
+  std: 0.0465
+  has_nan: False
+  has_inf: False
+  ✅ Boyut doğru
+
+[input_proj]
+  shape: [1, 32, 12, 20]
+  mean: -0.0176
+  std: 0.0554
+  has_nan: False
+  has_inf: False
+  ✅ Boyut doğru
+
+[transformer.encoder]
+  shape: [240, 1, 32]
+  mean: -0.0
+  std: 1.0001
+  has_nan: False
+  has_inf: False
+
+[transformer.decoder]
+  shape: [2, 7, 1, 32]
+  mean: -0.0
+  std: 1.0011
+  has_nan: False
+  has_inf: False
+
+[input_proj] Dummy HW = 12×20 = 240 token
+  → KAYIT [✅ PASS] Forward pass boyutlar doğru:
+  → KAYIT [✅ PASS] NaN/Inf yok:
+
+================================================================================
+BÖLÜM 2: GERÇEK CULane VERİSİ YÜKLEME
+================================================================================
+loading from cache file: ./cache/culane_['train.txt', 'val.txt'].pkl
+DB yüklendi: 87357 örnek
+shuffling indices...
+✅ Gerçek veri yüklendi: B=16, img=torch.Size([16, 3, 295, 820])
+   masks: torch.Size([16, 1, 295, 820])
+   targets: 16 tensor, ilk shape: torch.Size([16, 4, 73])
+  → KAYIT [✅ PASS] Gerçek CULane veri yükleme: B=16
+   Gerçek backbone çıkış: 9×25 = 225 token
+
+================================================================================
+BÖLÜM 3: FEATURE BENZERLİĞİ (input_proj) — BASELINE vs MAMBA KARŞILAŞTIRMASI
+================================================================================
+Gerçek CULane görüntüleri kullanıldı.
+
+Cosine Benzerlik Matrisi (input_proj, 5 görüntü):
+[[1.    0.974 0.979 0.92  0.968]
+ [0.974 1.    0.976 0.932 0.974]
+ [0.979 0.976 1.    0.919 0.974]
+ [0.92  0.932 0.919 1.    0.934]
+ [0.968 0.974 0.974 0.934 1.   ]]
+
+Ortalama çapraz-benzerlik: 0.9551
+NOT: Bu değer baseline transformer için de aynı çıkacak (aynı input_proj).
+Kritik olan bu değerin Mamba öğrenmesini engellememesi — overfit testi bunu kanıtlar.
+  → KAYIT [⚠️  WARN] Feature benzerliği (bilgi amaçlı): avg=0.9551 — gerçek veriyle yüksek ama overfit testi belirleyici
+
+================================================================================
+BÖLÜM 4: GRADIENT ANALİZİ — mevcut transformer.encoder
+================================================================================
+  transformer.encoder.layers.0.self_attn.in_proj_weight   | mean=2.73e-01 | max=4.83e+00 | OK
+  transformer.encoder.layers.0.self_attn.in_proj_bias     | mean=6.37e-01 | max=4.96e+00 | OK
+  transformer.encoder.layers.0.self_attn.out_proj.weight  | mean=4.68e-01 | max=3.27e+00 | OK
+  transformer.encoder.layers.0.self_attn.out_proj.bias    | mean=1.54e+00 | max=4.44e+00 | OK
+  transformer.encoder.layers.0.linear1.weight             | mean=2.48e-01 | max=2.57e+00 | OK
+  transformer.encoder.layers.0.linear1.bias               | mean=3.84e-01 | max=1.67e+00 | OK
+  transformer.encoder.layers.0.linear2.weight             | mean=3.05e-01 | max=3.40e+00 | OK
+  transformer.encoder.layers.0.linear2.bias               | mean=1.23e+00 | max=3.71e+00 | OK
+  transformer.encoder.layers.0.norm1.weight               | mean=8.03e-01 | max=4.91e+00 | OK
+  transformer.encoder.layers.0.norm1.bias                 | mean=1.25e+00 | max=3.69e+00 | OK
+  transformer.encoder.layers.0.norm2.weight               | mean=7.86e-01 | max=3.33e+00 | OK
+  transformer.encoder.layers.0.norm2.bias                 | mean=1.43e+00 | max=4.47e+00 | OK
+  transformer.encoder.layers.1.self_attn.in_proj_weight   | mean=2.28e-01 | max=7.77e+00 | OK
+  transformer.encoder.layers.1.self_attn.in_proj_bias     | mean=3.59e-01 | max=4.28e+00 | OK
+  transformer.encoder.layers.1.self_attn.out_proj.weight  | mean=5.33e-01 | max=3.62e+00 | OK
+  transformer.encoder.layers.1.self_attn.out_proj.bias    | mean=1.21e+00 | max=3.25e+00 | OK
+  transformer.encoder.layers.1.linear1.weight             | mean=2.15e-01 | max=3.38e+00 | OK
+  transformer.encoder.layers.1.linear1.bias               | mean=3.41e-01 | max=1.90e+00 | OK
+  transformer.encoder.layers.1.linear2.weight             | mean=2.66e-01 | max=3.55e+00 | OK
+  transformer.encoder.layers.1.linear2.bias               | mean=1.29e+00 | max=3.17e+00 | OK
+  transformer.encoder.layers.1.norm1.weight               | mean=8.40e-01 | max=3.48e+00 | OK
+  transformer.encoder.layers.1.norm1.bias                 | mean=1.37e+00 | max=3.61e+00 | OK
+  transformer.encoder.layers.1.norm2.weight               | mean=7.94e-01 | max=4.22e+00 | OK
+  transformer.encoder.layers.1.norm2.bias                 | mean=1.41e+00 | max=3.21e+00 | OK
+
+Dead: 0 | Exploding: 0
+✅ Gradient akışı sağlıklı
+  → KAYIT [✅ PASS] Mevcut encoder gradient sağlıklı:
+
+================================================================================
+BÖLÜM 5: GERÇEK MAMBA-SSM KURULUM + İZOLE TEST
+================================================================================
+✅ mamba-ssm import başarılı
+  → KAYIT [✅ PASS] Gerçek mamba-ssm kurulumu başarılı:
+Forward çıktı     : torch.Size([1, 240, 32])
+Bidirectional çıktı: torch.Size([1, 240, 32])
+
+Giriş gradient mean: 7.03e-02
+  ✅ A_log: 9.37e-04
+  ✅ D: 8.90e-01
+  ✅ in_proj.weight: 7.50e-01
+  ✅ conv1d.weight: 5.64e-01
+  ✅ conv1d.bias: 3.28e+00
+  ✅ x_proj.weight: 1.55e-02
+  ✅ dt_proj.weight: 2.99e-04
+  ✅ dt_proj.bias: 2.96e-03
+  ✅ out_proj.weight: 2.47e+00
+  ✅ A_log: 7.12e-04
+  ✅ D: 8.93e-01
+  ✅ in_proj.weight: 8.03e-01
+  ✅ conv1d.weight: 6.64e-01
+  ✅ conv1d.bias: 3.32e+00
+  ✅ x_proj.weight: 2.07e-02
+  ✅ dt_proj.weight: 1.94e-04
+  ✅ dt_proj.bias: 1.76e-03
+  ✅ out_proj.weight: 2.53e+00
+
+✅ Gerçek Mamba kernel gradient akışı tamam
+  → KAYIT [✅ PASS] Mamba forward/bidirectional çalışıyor:
+  → KAYIT [✅ PASS] Mamba gradient akışı sağlıklı: inp_grad=7.03e-02
+
+================================================================================
+BÖLÜM 6: BidirectionalMambaEncoder SHAPE DOĞRULAMASI
+================================================================================
+num_heads = 2
+B=1: out=torch.Size([240, 1, 32]), wts=torch.Size([2, 240, 240]) → ✅ PASS
+B=16: out=torch.Size([240, 16, 32]), wts=torch.Size([32, 240, 240]) → ✅ PASS
+✅ wts_b1[0].reshape(12,20,12,20): torch.Size([12, 20, 12, 20])
+  → KAYIT [✅ PASS] enc_attn_weights shape doğrulandı: wts[0].reshape(12,20,12,20)=torch.Size([12, 20, 12, 20])
+  → KAYIT [✅ PASS] Wrapper shape testi geçti (B=1 ve B=16):
+
+================================================================================
+BÖLÜM 7: OVERFİT TESTLERİ
+================================================================================
+
+────────────────────────────────────────────────────────────
+TEST: BASELINE transformer, B=1 (ablation referansı)
+  use_mamba=False, d_state=16, B=1, epochs=200
+────────────────────────────────────────────────────────────
+  Epoch   0: 78.6263
+  Epoch  40: 16.6328
+  Epoch  80: 13.8635
+  Epoch 120: 12.3847
+  Epoch 160: 13.6300
+
+  Başlangıç: 78.6263 | Final: 14.8529 | Düşüş: %81.1
+  Spike sayısı: 0
+  → WARN (75-90%)
+
+────────────────────────────────────────────────────────────
+TEST: Mamba d_state=16, B=1
+  use_mamba=True, d_state=16, B=1, epochs=200
+────────────────────────────────────────────────────────────
+  Epoch   0: 50.0151
+  Epoch  40: 14.5275
+  Epoch  80: 10.0033
+  Epoch 120: 11.1402
+  Epoch 160: 9.2359
+
+  Başlangıç: 50.0151 | Final: 7.1635 | Düşüş: %85.7
+  Spike sayısı: 0
+  → WARN (75-90%)
+
+────────────────────────────────────────────────────────────
+TEST: Mamba d_state=32, B=1 (kapasite artırımı)
+  use_mamba=True, d_state=32, B=1, epochs=200
+────────────────────────────────────────────────────────────
+  Epoch   0: 52.4217
+  Epoch  40: 13.9998
+  Epoch  80: 10.6493
+  Epoch 120: 10.3738
+  Epoch 160: 8.6106
+
+  Başlangıç: 52.4217 | Final: 10.7019 | Düşüş: %79.6
+  Spike sayısı: 0
+  → WARN (75-90%)
+
+────────────────────────────────────────────────────────────
+TEST: Mamba d_state=16, B=16 (tam batch)
+  use_mamba=True, d_state=16, B=16, epochs=200
+────────────────────────────────────────────────────────────
+  Epoch   0: 114.3768
+  Epoch  40: 11.9114
+  Epoch  80: 10.4771
+  Epoch 120: 9.2043
+  Epoch 160: 8.5329
+
+  Başlangıç: 114.3768 | Final: 8.2219 | Düşüş: %92.8
+  Spike sayısı: 0
+  → PASS (>90%)
+  → KAYIT [⚠️  WARN] Overfit: Baseline transformer B=1: drop=81.1%
+  → KAYIT [⚠️  WARN] Overfit: Mamba d16 B=1: drop=85.7%
+  → KAYIT [⚠️  WARN] Overfit: Mamba d32 B=1: drop=79.6%
+  → KAYIT [✅ PASS] Overfit: Mamba d16 B=16 (tam batch): drop=92.8%
+
+
+
+╔════════════════════════════════════════════════════════════════════╗
+║   PRE-INTEGRATION ANALYSIS RAPORU — LSTR + Mamba                  ║
+╚════════════════════════════════════════════════════════════════════╝
+
+Model              : LSTR (Mini-ResNet, CULane config)
+Entegre edilecek   : BidirectionalMambaEncoder (gerçek mamba-ssm kernel)
+Entegrasyon noktası: model.transformer.encoder
+GPU                : NVIDIA GeForce RTX 3060
+CUDA               : 12.1
+PyTorch            : 2.1.0+cu121
+
+────────────────────────────────────────────────────────────
+OVERFİT KARŞILAŞTIRMASI (ablation referansı)
+────────────────────────────────────────────────────────────
+  Baseline transformer B=1            ⚠️  %81.1
+  Mamba d_state=16   B=1              ⚠️  %85.7
+  Mamba d_state=32   B=1              ⚠️  %79.6
+  Mamba d_state=16   B=16             ✅ %92.8
+
+Test                                                Durum     Notlar
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Frozen param sadece BN (kasıtlı)                    ✅ PASS
+  Forward pass boyutlar doğru                         ✅ PASS
+  NaN/Inf yok                                         ✅ PASS
+  Gerçek CULane veri yükleme                          ✅ PASS      B=16
+  Feature benzerliği (bilgi amaçlı)                   ⚠️  WARN    avg=0.9551 — gerçek veriyle yüksek ama overfit testi belirleyici
+  Mevcut encoder gradient sağlıklı                    ✅ PASS
+  Gerçek mamba-ssm kurulumu başarılı                  ✅ PASS
+  Mamba forward/bidirectional çalışıyor               ✅ PASS
+  Mamba gradient akışı sağlıklı                       ✅ PASS      inp_grad=7.03e-02
+  enc_attn_weights shape doğrulandı                   ✅ PASS      wts[0].reshape(12,20,12,20)=torch.Size([12, 20, 12, 20])
+  Wrapper shape testi geçti (B=1 ve B=16)             ✅ PASS
+  Overfit: Baseline transformer B=1                   ⚠️  WARN    drop=81.1%
+  Overfit: Mamba d16 B=1                              ⚠️  WARN    drop=85.7%
+  Overfit: Mamba d32 B=1                              ⚠️  WARN    drop=79.6%
+  Overfit: Mamba d16 B=16 (tam batch)                 ✅ PASS      drop=92.8%
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+GENEL KARAR:
+⚠️  KOŞULLU — uyarılar mevcut: ['Feature benzerliği (bilgi amaçlı)', 'Overfit: Baseline transformer B=1', 'Overfit: Mamba d16 B=1', 'Overfit: Mamba d32 B=1']
+
+ABLATION YORUMU:
+  ✅ Mamba (%85.7) ≈ Transformer (%81.1) — overfit kapasitesi eşdeğer
+
+ÖNERİLEN SONRAKI ADIMLAR:
+  Tüm testler geçtiyse:
+    1. models/py_utils/mamba_encoder.py projeye eklendi (hazır)
+    2. kp.py veya LSTR_CULANE.py'de encoder'ı değiştir:
+         from models.py_utils.mamba_encoder import BidirectionalMambaEncoder
+         model.transformer.encoder = BidirectionalMambaEncoder()
+    3. Baseline LSTR CULane F1 ölç (0.64 referans)
+    4. Mamba versiyonu tam eğit → F1 karşılaştır
+    5. Backbone (VMamba) geçişine encoder ablation'dan sonra geç
+
+  Overfit başarısız veya Mamba < Baseline ise:
+    → d_state=32 ile mamba_encoder.py'yi güncelle
+    → lr=5e-4, 400 epoch dene
+    → loss_curves weight'ini 2.0'a düşür

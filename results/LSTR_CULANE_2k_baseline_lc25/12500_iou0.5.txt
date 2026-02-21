@@ -1,0 +1,6 @@
+file: ../results/LSTR_CULANE_2k_baseline_lc25/12500_iou0.5.txt
+tp: 13478 fp: 90641 fn: 91408
+precision: 0.129448
+recall: 0.128501
+Fmeasure: 0.128973
+

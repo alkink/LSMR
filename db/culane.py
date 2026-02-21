@@ -52,6 +52,8 @@ class CULANE(DETECTION):
             "test": ['test.txt'],
             "train+val": ['train.txt', 'val.txt'],
             "val": ['val.txt'],
+            "train_100": ['train_100.txt'],   # progressive scaling: 100 images
+            "train_2k": ['train_2k.txt'],     # progressive scaling: 2k images
         }[self._split]
 
         self.root = os.path.join(data_dir, 'CULane')

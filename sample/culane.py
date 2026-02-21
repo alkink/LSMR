@@ -36,7 +36,7 @@ def kp_detection(db, k_ind):
         # reading ground truth
         item  = db.detections(db_ind) # all in the raw coordinate
         img   = cv2.imread(item['path'])
-        mask  = np.ones((1, img.shape[0], img.shape[1], 1), dtype=np.bool)
+        mask  = np.ones((1, img.shape[0], img.shape[1], 1), dtype=bool)
         label = item['label']
         transform = True
         if transform:

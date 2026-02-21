@@ -1,0 +1,6 @@
+file: ../results/LSTR_CULANE_100_mamba/800_iou0.5.txt
+tp: 323 fp: 81204 fn: 104563
+precision: 0.00396188
+recall: 0.00307953
+Fmeasure: 0.00346542
+

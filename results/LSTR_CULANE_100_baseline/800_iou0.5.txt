@@ -1,0 +1,6 @@
+file: ../results/LSTR_CULANE_100_baseline/800_iou0.5.txt
+tp: 155 fp: 56898 fn: 104731
+precision: 0.00271677
+recall: 0.00147779
+Fmeasure: 0.0019143
+

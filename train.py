@@ -196,8 +196,9 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False):
     # terminating data fetching processes
     for training_task in training_tasks:
         training_task.terminate()
-    for validation_task in validation_tasks:
-        validation_task.terminate()
+    if val_iter:
+        for validation_task in validation_tasks:
+            validation_task.terminate()
 
 if __name__ == "__main__":
     args = parse_args()
