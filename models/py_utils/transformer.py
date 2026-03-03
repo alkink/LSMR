@@ -54,7 +54,10 @@ class Transformer(nn.Module):
 
         mask = mask.flatten(1)
 
-        tgt = torch.zeros_like(query_embed)
+        # Fix: Use query_embed as initial tgt instead of zeros
+        # This allows self-attention to learn from the first epoch
+        # Original DETR uses zeros, which causes dead weight gradients in layer 0
+        tgt = query_embed.clone() * 0.1  # Small scale for stable training
 
         memory, weights = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
 

@@ -54,6 +54,8 @@ class CULANE(DETECTION):
             "val": ['val.txt'],
             "train_100": ['train_100.txt'],   # progressive scaling: 100 images
             "train_2k": ['train_2k.txt'],     # progressive scaling: 2k images
+            "train_5k": ['train_5k.txt'],     # custom subset: 5k images
+            "train_10k": ['train_10k.txt'],   # custom subset: 10k images
         }[self._split]
 
         self.root = os.path.join(data_dir, 'CULane')
@@ -415,7 +417,45 @@ class CULANE(DETECTION):
         runtime *= 1000.  # s to ms
         img_name = self._annotations[idx]['old_anno']['org_path']  # /driver_100_30frame/05251517_0433.MP4/00930.jpg
         h_samples = self._annotations[idx]['old_anno']['y_samples']  # no need
-        lanes = self.pred2lanes(img_name, pred, h_samples)
+
+        # 1) New mask-mode path: pred is lane point-list
+        #    e.g. [[(x1,y1), (x2,y2), ...], ...]
+        lanes = None
+        if isinstance(pred, list) and len(pred) > 0 and isinstance(pred[0], (list, tuple)):
+            first_lane = pred[0]
+            if len(first_lane) > 0 and isinstance(first_lane[0], (list, tuple)) and len(first_lane[0]) == 2:
+                lanes = []
+                for lane_pts in pred:
+                    lane_arr = np.zeros(self.pts, dtype=np.float32)
+                    if lane_pts is None or len(lane_pts) < 2:
+                        lanes.append(lane_arr)
+                        continue
+
+                    # Convert lane point list to evaluator y-samples via linear interpolation.
+                    pts = np.array(lane_pts, dtype=np.float32)
+                    xs = pts[:, 0]
+                    ys = pts[:, 1]
+                    order = np.argsort(ys)
+                    xs = xs[order]
+                    ys = ys[order]
+
+                    y_eval = np.array([
+                        np.uint16((self.img_h - i * 20 / self.img_h * self.img_h) - 1)
+                        for i in range(self.pts)
+                    ], dtype=np.float32)
+
+                    for i, yq in enumerate(y_eval):
+                        if yq < ys.min() or yq > ys.max():
+                            continue
+                        xq = np.interp(yq, ys, xs)
+                        if 0 < xq < (self.img_w - 1):
+                            lane_arr[i] = xq
+                    lanes.append(lane_arr)
+
+        # 2) Legacy polynomial path
+        if lanes is None:
+            lanes = self.pred2lanes(img_name, pred, h_samples)
+
         prefix = os.path.dirname(img_name)
         prefix = os.path.join(exp_dir, prefix[1:])
         if not os.path.exists(prefix) and prefix != '':
@@ -442,6 +482,19 @@ class CULANE(DETECTION):
 
     def eval(self, exp_dir, predictions, runtimes, label=None, only_metrics=False):
         self.save_culane_predictions(predictions, runtimes, exp_dir)
+        
+        # LSTR: Print FPS. `runtimes` collects the seconds per forward pass.
+        # If --batch > 1, this represents (1 / time_per_batch) * batch.
+        mean_time = np.mean(runtimes)
+        fps = 1.0 / mean_time if mean_time > 0 else 0
+        print(f"\n[EVAL] Average forward-pass time: {mean_time:.4f}s")
+        print(f"[EVAL] Base FPS (1 batch/sec): {fps:.2f} Hz")
+        print(f"(Note: If you used '--batch N', your true FPS is Base FPS * N)\n")
+        
+        # Save FPS so eval_progressive.sh can access and append it
+        fps_file = os.path.join(exp_dir, 'fps.txt')
+        with open(fps_file, 'w') as f:
+            f.write(f"FPS: {fps:.2f}\n")
 
         return 0
 
@@ -450,7 +503,6 @@ class NumpyEncoder(json.JSONEncoder):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return json.JSONEncoder.default(self, obj)
-
 
 
 

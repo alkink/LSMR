@@ -12,6 +12,11 @@ import matplotlib.pyplot as plt
 
 from sample.vis import *
 
+try:
+    from mask_migration.bolum5_postprocess import mask_to_lane_coords
+except Exception:
+    mask_to_lane_coords = None
+
 COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
           [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
 
@@ -47,15 +52,46 @@ class PostProcess(nn.Module):
                           For evaluation, this must be the original image size (before any data augmentation)
                           For visualization, this should be the image size after data augment, but before padding
         """
-        out_logits, out_bbox = outputs['pred_logits'], outputs['pred_curves']
-        assert len(out_logits) == len(target_sizes)
-        assert target_sizes.shape[1] == 2
-        prob = F.softmax(out_logits, -1)
-        scores, labels = prob.max(-1)
-        labels[labels != 1] = 0
-        results = torch.cat([labels.unsqueeze(-1).float(), out_bbox], dim=-1)
+        if 'pred_logits' in outputs and 'pred_curves' in outputs:
+            out_logits, out_bbox = outputs['pred_logits'], outputs['pred_curves']
+            assert len(out_logits) == len(target_sizes)
+            assert target_sizes.shape[1] == 2
+            prob = F.softmax(out_logits, -1)
+            scores, labels = prob.max(-1)
+            labels[labels != 1] = 0
+            results = torch.cat([labels.unsqueeze(-1).float(), out_bbox], dim=-1)
+            return results
 
-        return results
+        mask_keys = ['pred_heatmap', 'pred_offset', 'pred_vrange', 'pred_scores']
+        if all(k in outputs for k in mask_keys):
+            if mask_to_lane_coords is None:
+                raise ImportError('mask_to_lane_coords import failed; check mask_migration module path')
+
+            heatmap = outputs['pred_heatmap']
+            offset = outputs['pred_offset']
+            v_range = outputs['pred_vrange']
+            scores = outputs['pred_scores']
+
+            assert len(heatmap) == len(target_sizes)
+            assert target_sizes.shape[1] == 2
+
+            lanes_batch = []
+            for b in range(heatmap.shape[0]):
+                img_h = int(target_sizes[b, 0].item())
+                img_w = int(target_sizes[b, 1].item())
+                lanes = mask_to_lane_coords(
+                    heatmap[b],
+                    offset[b],
+                    v_range[b],
+                    scores[b],
+                    score_thresh=0.5,
+                    img_h=img_h,
+                    img_w=img_w,
+                )
+                lanes_batch.append(lanes)
+            return lanes_batch
+
+        raise KeyError(f'Unsupported output keys in PostProcess: {list(outputs.keys())}')
 
 def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
                  isEncAttn=False, isDecAttn=False):
@@ -81,7 +117,10 @@ def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
         for scale in multi_scales:
             images = np.zeros((1, 3, input_size[0], input_size[1]), dtype=np.float32)
             masks = np.ones((1, 1, input_size[0], input_size[1]), dtype=np.float32)
-            orig_target_sizes = torch.tensor(input_size).unsqueeze(0).cuda()
+            if hasattr(db, 'img_h') and hasattr(db, 'img_w'):
+                orig_target_sizes = torch.tensor([db.img_h, db.img_w]).unsqueeze(0).cuda()
+            else:
+                orig_target_sizes = torch.tensor(input_size).unsqueeze(0).cuda()
             pad_image     = image.copy()
             pad_mask      = np.zeros((height, width, 1), dtype=np.float32)
             resized_image = cv2.resize(pad_image, (input_size[1], input_size[0]))
@@ -97,6 +136,7 @@ def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
             # seeking better FPS performance
             images = images.repeat(repeat, 1, 1, 1).cuda(non_blocking=True)
             masks = masks.repeat(repeat, 1, 1, 1).cuda(non_blocking=True)
+            orig_target_sizes = orig_target_sizes.repeat(repeat, 1)
 
             conv_features, enc_attn_weights, dec_attn_weights = [], [], []
             if isDecAttn or isEncAttn:
@@ -125,9 +165,13 @@ def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
             results = postprocessors['curves'](outputs, orig_target_sizes)
 
             if evaluator is not None:
-                evaluator.add_prediction(ind, results.cpu().numpy(), t)
+                if isinstance(results, torch.Tensor):
+                    evaluator.add_prediction(ind, results[0:1].cpu().numpy(), t)
+                else:
+                    # mask-mode: list per batch -> take first sample (repeat copies same image)
+                    evaluator.add_prediction(ind, results[0], t)
 
-        if debug:
+        if debug and isinstance(results, torch.Tensor):
             img_lst = image_file.split('/')
             lane_debug_dir = os.path.join(result_dir, "lane_debug")
             if not os.path.exists(lane_debug_dir):

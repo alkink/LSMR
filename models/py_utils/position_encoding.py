@@ -52,6 +52,12 @@ class PositionEmbeddingSine(nn.Module):
         pos_y = torch.stack((pos_y[:, :, :, 0::2].sin(), pos_y[:, :, :, 1::2].cos()), dim=4).flatten(3)
 
         pos = torch.cat((pos_y, pos_x), dim=3).permute(0, 3, 1, 2)
+        
+        # Scale fix: Position encoding çok büyük (L2≈1920), memory ile uyumlu hale getir (L2≈87)
+        # Position encoding mean≈0 zaten, sadece std'yi normalize et
+        pos_std = pos.std()
+        if pos_std > 1e-6:  # Avoid division by zero
+            pos = pos / pos_std * 0.1  # Target: std≈0.1, memory scale ile uyumlu
 
         return pos
 
