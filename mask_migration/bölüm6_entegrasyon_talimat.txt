@@ -1,0 +1,27 @@
+MASK MIGRATION — ENTEGRASYON TALİMATI
+=====================================
+
+1) Önce debug-first scriptleri sırayla çalıştır:
+   python mask_migration/bölüm0_shapes.py --cfg LSTR_CULANE_2k_mamba
+   python mask_migration/bölüm1_gt_mask.py
+   python mask_migration/bölüm1b_culane_gt.py --cfg LSTR_CULANE_2k_mamba --samples 5
+   python mask_migration/bölüm2_mask_head.py
+   python mask_migration/bölüm3_loss.py
+   python mask_migration/bölüm4_overfit.py --cfg LSTR_CULANE_2k_mamba --epochs 300 --lr 1e-3
+   python mask_migration/bölüm5_postprocess.py
+
+2) Yeni model:
+   models/LSTR_CULANE_2k_mamba_mask.py
+
+3) Yeni config:
+   config/LSTR_CULANE_2k_mamba_mask.json
+
+4) Eğitim komutu:
+   python train.py LSTR_CULANE_2k_mamba_mask
+
+5) Değerlendirme komutu:
+   python test.py LSTR_CULANE_2k_mamba_mask --split testing --testiter 12500 --modality eval
+
+6) Not:
+   Bu geçişte model çıktısı pred_heatmap/pred_offset/pred_vrange/pred_scores şeklindedir.
+   test/evaluator/culane kaydetme hattı mask çıktısını lane-point formatında da işler.

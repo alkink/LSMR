@@ -1,0 +1,72 @@
+{
+    "system": {
+        "dataset": "CULANE",
+        "batch_size": 16,
+        "sampling_function": "kp_detection",
+        "train_split": "train_2k",
+        "val_split": "test",
+        "test_split": "test",
+        "use_crop": false,
+        "learning_rate": 0.0001,
+        "decay_rate": 10,
+        "val_iter": 0,
+        "display": 500,
+        "opt_algo": "adam",
+        "prefetch_size": 5,
+        "max_iter": 12500,
+        "stepsize": 450000,
+        "snapshot": 2500,
+        "chunk_sizes": [
+            16
+        ],
+        "cache_dir": "./cache",
+        "result_dir": "./results",
+        "data_dir": "/home/alki/projects/",
+        "res_layers": [
+            1,
+            2,
+            2,
+            2
+        ],
+        "res_dims": [
+            16,
+            32,
+            64,
+            128
+        ],
+        "res_strides": [
+            1,
+            2,
+            2,
+            2
+        ],
+        "attn_dim": 32,
+        "dim_feedforward": 128,
+        "kps_dim": 8,
+        "num_heads": 2,
+        "enc_layers": 2,
+        "dec_layers": 2,
+        "block": "BasicBlock",
+        "num_queries": 7,
+        "snapshot_name": "LSTR_CULANE_2k_mamba_dynamic",
+        "drop_out": 0.1,
+        "lsp_dim": 8,
+        "mlp_layers": 3,
+        "lane_categories": 2,
+        "aux_loss": true,
+        "pos_type": "sine",
+        "pre_norm": false,
+        "return_intermediate": true
+    },
+    "db": {
+        "rand_color": true,
+        "input_size": [
+            295,
+            820
+        ],
+        "test_scales": [
+            1
+        ],
+        "categories": 1
+    }
+}
