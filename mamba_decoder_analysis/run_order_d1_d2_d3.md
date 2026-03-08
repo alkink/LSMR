@@ -74,6 +74,13 @@ python3 train.py LSTR_CULANE_5k_mamba_dec_e
 python3 test.py LSTR_CULANE_5k_mamba_dec_e --modality eval --split testing --testiter 30000 --batch 1
 ```
 
+## 2b) 5k — Decoder Variant C
+
+```bash
+python3 train.py LSTR_CULANE_5k_mamba_dec_c
+python3 test.py LSTR_CULANE_5k_mamba_dec_c --modality eval --split testing --testiter 30000 --batch 1
+```
+
 ## 3) DENEY 3 — VSSD Encoder
 
 ```bash

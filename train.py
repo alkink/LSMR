@@ -55,15 +55,27 @@ def prefetch_data(db, queue, sample_data):
 
 def pin_memory(data_queue, pinned_data_queue, sema):
     while True:
-        data = data_queue.get()
+        # Graceful shutdown path: after main loop ends we release semaphore,
+        # but this thread may still be blocked on Queue.get().
+        if sema.acquire(blocking=False):
+            return
+
+        try:
+            data = data_queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        except (EOFError, OSError):
+            # Data worker processes may terminate before this thread drains
+            # the queue; treat as normal shutdown.
+            return
+
+        if data is None:
+            return
 
         data["xs"] = [x.pin_memory() for x in data["xs"]]
         data["ys"] = [y.pin_memory() for y in data["ys"]]
 
         pinned_data_queue.put(data)
-
-        if sema.acquire(blocking=False):
-            return
 
 def init_parallel_jobs(dbs, queue, fn):
     tasks = [Process(target=prefetch_data, args=(db, queue, fn)) for db in dbs]

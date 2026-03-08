@@ -1,4 +1,5 @@
 import os
+import glob
 import torch
 import importlib
 import torch.nn as nn
@@ -163,6 +164,37 @@ class NetworkFactory(object):
 
     def load_params(self, iteration, is_bbox_only=False):
         cache_file = system_configs.snapshot_file.format(iteration)
+
+        if not os.path.exists(cache_file):
+            snapshot_dir = system_configs.snapshot_dir
+            snapshot_name = system_configs.snapshot_name
+            # Gizli karakter/sonek farklarında tolerans: <name>_<iter>*.pkl*
+            pattern = os.path.join(snapshot_dir, f"{snapshot_name}_{int(iteration)}*.pkl*")
+            candidates = sorted(glob.glob(pattern))
+
+            if candidates:
+                cache_file = candidates[0]
+                print(
+                    "[NetworkFactory] exact checkpoint bulunamadı; eşleşen dosya kullanılıyor: {}"
+                    .format(cache_file)
+                )
+            else:
+                nearby = sorted(glob.glob(os.path.join(snapshot_dir, f"{snapshot_name}_*.pkl*")))
+                nearby_tail = nearby[-8:]
+                raise FileNotFoundError(
+                    "Checkpoint bulunamadı.\n"
+                    "  expected: {}\n"
+                    "  absolute: {}\n"
+                    "  cwd: {}\n"
+                    "  snapshot_dir: {}\n"
+                    "  nearby: {}".format(
+                        system_configs.snapshot_file.format(iteration),
+                        os.path.abspath(system_configs.snapshot_file.format(iteration)),
+                        os.getcwd(),
+                        snapshot_dir,
+                        nearby_tail,
+                    )
+                )
 
         with open(cache_file, "rb") as f:
             params = torch.load(f)

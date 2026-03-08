@@ -1,3 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage:
+#   bash remote_apply_eval_progressive_patch.sh /path/to/LSMR
+# If path is omitted, current directory is used.
+
+ROOT_DIR="${1:-.}"
+TARGET="${ROOT_DIR%/}/eval_progressive.sh"
+
+cat > "$TARGET" <<'EOF'
 #!/bin/bash
 # Parametrik CULane evaluation — progressive scaling için
 # Kullanım: bash eval_progressive.sh <config_name> <iter>
@@ -78,3 +89,7 @@ fi
 echo ""
 echo "F1 sonucu: ${out}"
 cat "${out}"
+EOF
+
+chmod +x "$TARGET"
+echo "Patched: $TARGET"

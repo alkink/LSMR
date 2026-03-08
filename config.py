@@ -69,10 +69,21 @@ class Config:
 
         # LaneDetection Setting
         self._configs["max_lanes"] = None
+        # Mamba encoder scan-order setting
+        self._configs["scan_order"] = "none"
+        self._configs["scan_hw"] = ""
 
     @property
     def max_lanes(self):
         return self._configs["max_lanes"]
+
+    @property
+    def scan_order(self):
+        return self._configs["scan_order"]
+
+    @property
+    def scan_hw(self):
+        return self._configs["scan_hw"]
 
     @property
     def num_queries(self):
