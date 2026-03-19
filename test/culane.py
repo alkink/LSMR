@@ -17,6 +17,11 @@ try:
 except Exception:
     mask_to_lane_coords = None
 
+try:
+    from models.condlstr_dense_postprocess import dense_outputs_to_lane_coords
+except Exception:
+    dense_outputs_to_lane_coords = None
+
 COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
           [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
 
@@ -61,6 +66,18 @@ class PostProcess(nn.Module):
             labels[labels != 1] = 0
             results = torch.cat([labels.unsqueeze(-1).float(), out_bbox], dim=-1)
             return results
+
+        dense_keys = ['pred_object_logits', 'pred_ranges', 'pred_dense_mask', 'pred_dense_reg']
+        if all(k in outputs for k in dense_keys):
+            if dense_outputs_to_lane_coords is None:
+                raise ImportError('dense_outputs_to_lane_coords import failed; check models.condlstr_dense_postprocess')
+
+            return dense_outputs_to_lane_coords(
+                outputs=outputs,
+                target_sizes=target_sizes,
+                score_thresh=0.5,
+                min_points=2,
+            )
 
         mask_keys = ['pred_heatmap', 'pred_offset', 'pred_vrange', 'pred_scores']
         if all(k in outputs for k in mask_keys):

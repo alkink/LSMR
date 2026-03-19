@@ -27,7 +27,8 @@ class Config:
         self._configs["use_crop"]          = False
 
         # Directories
-        self._configs["data_dir"]   = "./data"
+        # LSTR_DATA_DIR env var ile override edilebilir (örn. uzak sunucu için)
+        self._configs["data_dir"]   = os.environ.get("LSTR_DATA_DIR", "./data")
         self._configs["cache_dir"] = "./cache"
 
         self._configs["config_dir"] = "./config"
@@ -311,4 +312,10 @@ class Config:
             if key in self._configs:
                 self._configs[key] = new[key]
 
+        # Keep remote-server data_root override effective even after JSON config load.
+        env_data_dir = os.environ.get("LSTR_DATA_DIR")
+        if env_data_dir:
+            self._configs["data_dir"] = env_data_dir
+
 system_configs = Config()
+
