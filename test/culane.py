@@ -22,6 +22,11 @@ try:
 except Exception:
     dense_outputs_to_lane_coords = None
 
+try:
+    from models.condlstr_parity_postprocess import parity_outputs_to_lane_coords
+except Exception:
+    parity_outputs_to_lane_coords = None
+
 COLORS = [[0.000, 0.447, 0.741], [0.850, 0.325, 0.098], [0.929, 0.694, 0.125],
           [0.494, 0.184, 0.556], [0.466, 0.674, 0.188], [0.301, 0.745, 0.933]]
 
@@ -69,6 +74,16 @@ class PostProcess(nn.Module):
 
         dense_keys = ['pred_object_logits', 'pred_ranges', 'pred_dense_mask', 'pred_dense_reg']
         if all(k in outputs for k in dense_keys):
+            if outputs.get('postprocess_mode') == 'condlstr_parity':
+                if parity_outputs_to_lane_coords is None:
+                    raise ImportError('parity_outputs_to_lane_coords import failed; check models.condlstr_parity_postprocess')
+                return parity_outputs_to_lane_coords(
+                    outputs=outputs,
+                    target_sizes=target_sizes,
+                    score_thresh=float(outputs.get('score_thresh', 0.7)),
+                    min_points=2,
+                )
+
             if dense_outputs_to_lane_coords is None:
                 raise ImportError('dense_outputs_to_lane_coords import failed; check models.condlstr_dense_postprocess')
 

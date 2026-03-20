@@ -48,7 +48,7 @@
         "dec_layers": 2,
         "block": "BasicBlock",
         "num_queries": 7,
-        "snapshot_name": "LSTR_CULANE_2k_mamba_dense",
+        "snapshot_name": "LSTR_CULANE_2k_mamba_dense_eos05",
         "drop_out": 0.1,
         "lsp_dim": 8,
         "mlp_layers": 3,
@@ -63,7 +63,7 @@
         "dense_line_width": 1.5,
         "dense_min_valid_rows": 2,
         "dense_enable_row_iou_loss": false,
-        "dense_object_eos_coef": 0.1
+        "dense_object_eos_coef": 0.5
     },
     "db": {
         "rand_color": true,
@@ -77,5 +77,6 @@
         "categories": 1
     }
 }
+
 
 
