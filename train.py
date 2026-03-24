@@ -72,8 +72,9 @@ def pin_memory(data_queue, pinned_data_queue, sema):
         if data is None:
             return
 
-        data["xs"] = [x.pin_memory() for x in data["xs"]]
-        data["ys"] = [y.pin_memory() for y in data["ys"]]
+        if torch.cuda.is_available():
+            data["xs"] = [x.pin_memory() for x in data["xs"]]
+            data["ys"] = [y.pin_memory() for y in data["ys"]]
 
         pinned_data_queue.put(data)
 
@@ -84,7 +85,7 @@ def init_parallel_jobs(dbs, queue, fn):
         task.start()
     return tasks
 
-def train(training_dbs, validation_db, start_iter=0, freeze=False):
+def train(training_dbs, validation_db, start_iter=0, freeze=False, use_prefetch=True):
     learning_rate    = system_configs.learning_rate
     max_iteration    = system_configs.max_iter
     pretrained_model = system_configs.pretrain
@@ -99,38 +100,49 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False):
     training_size   = len(training_dbs[0].db_inds)
     validation_size = len(validation_db.db_inds)
 
-    # queues storing data for training
-    training_queue   = Queue(system_configs.prefetch_size) # 5
-    validation_queue = Queue(5)
-
-    # queues storing pinned data for training
-    pinned_training_queue   = queue.Queue(system_configs.prefetch_size) # 5
-    pinned_validation_queue = queue.Queue(5)
-
     # load data sampling function
     data_file   = "sample.{}".format(training_dbs[0].data) # "sample.coco"
     sample_data = importlib.import_module(data_file).sample_data
     # print(type(sample_data)) # function
 
-    # allocating resources for parallel reading
-    training_tasks   = init_parallel_jobs(training_dbs, training_queue, sample_data)
-    if val_iter:
-        validation_tasks = init_parallel_jobs([validation_db], validation_queue, sample_data)
+    if use_prefetch:
+        # queues storing data for training
+        training_queue   = Queue(system_configs.prefetch_size) # 5
+        validation_queue = Queue(5)
 
-    training_pin_semaphore   = threading.Semaphore()
-    validation_pin_semaphore = threading.Semaphore()
-    training_pin_semaphore.acquire()
-    validation_pin_semaphore.acquire()
+        # queues storing pinned data for training
+        pinned_training_queue   = queue.Queue(system_configs.prefetch_size) # 5
+        pinned_validation_queue = queue.Queue(5)
 
-    training_pin_args   = (training_queue, pinned_training_queue, training_pin_semaphore)
-    training_pin_thread = threading.Thread(target=pin_memory, args=training_pin_args)
-    training_pin_thread.daemon = True
-    training_pin_thread.start()
+        # allocating resources for parallel reading
+        training_tasks   = init_parallel_jobs(training_dbs, training_queue, sample_data)
+        if val_iter:
+            validation_tasks = init_parallel_jobs([validation_db], validation_queue, sample_data)
 
-    validation_pin_args   = (validation_queue, pinned_validation_queue, validation_pin_semaphore)
-    validation_pin_thread = threading.Thread(target=pin_memory, args=validation_pin_args)
-    validation_pin_thread.daemon = True
-    validation_pin_thread.start()
+        training_pin_semaphore   = threading.Semaphore()
+        validation_pin_semaphore = threading.Semaphore()
+        training_pin_semaphore.acquire()
+        validation_pin_semaphore.acquire()
+
+        training_pin_args   = (training_queue, pinned_training_queue, training_pin_semaphore)
+        training_pin_thread = threading.Thread(target=pin_memory, args=training_pin_args)
+        training_pin_thread.daemon = True
+        training_pin_thread.start()
+
+        validation_pin_args   = (validation_queue, pinned_validation_queue, validation_pin_semaphore)
+        validation_pin_thread = threading.Thread(target=pin_memory, args=validation_pin_args)
+        validation_pin_thread.daemon = True
+        validation_pin_thread.start()
+    else:
+        training_tasks = []
+        validation_tasks = []
+        pinned_training_queue = None
+        pinned_validation_queue = None
+        training_pin_semaphore = None
+        validation_pin_semaphore = None
+        train_k_ind = 0
+        val_k_ind = 0
+        print("prefetch disabled: running single-process data sampling")
 
     print("building model...")
     nnet = NetworkFactory(flag=True)
@@ -152,6 +164,7 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False):
 
     print("training start...")
     nnet.cuda()
+    print("training device: {}".format(nnet.device))
     nnet.train_mode()
     header = None
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -163,7 +176,10 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False):
                                                       file=save_stdout, ncols=67),
                                                  print_freq=10, header=header):
 
-            training = pinned_training_queue.get(block=True)
+            if use_prefetch:
+                training = pinned_training_queue.get(block=True)
+            else:
+                training, train_k_ind = sample_data(training_dbs[0], train_k_ind)
             viz_split = 'train'
             save = True if (display and iteration % display == 0) else False
             (set_loss, loss_dict) \
@@ -179,7 +195,10 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False):
                 nnet.eval_mode()
                 viz_split = 'val'
                 save = True
-                validation = pinned_validation_queue.get(block=True)
+                if use_prefetch:
+                    validation = pinned_validation_queue.get(block=True)
+                else:
+                    validation, val_k_ind = sample_data(validation_db, val_k_ind)
                 (val_set_loss, val_loss_dict) \
                     = nnet.validate(iteration, save, viz_split, **validation)
                 (loss_dict_reduced, loss_dict_reduced_unscaled, loss_dict_reduced_scaled, loss_value) = val_loss_dict
@@ -200,17 +219,17 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False):
                 metric_logger.synchronize_between_processes()
                 print("Averaged stats:", metric_logger)
 
+    if use_prefetch:
+        # sending signal to kill the thread
+        training_pin_semaphore.release()
+        validation_pin_semaphore.release()
 
-    # sending signal to kill the thread
-    training_pin_semaphore.release()
-    validation_pin_semaphore.release()
-
-    # terminating data fetching processes
-    for training_task in training_tasks:
-        training_task.terminate()
-    if val_iter:
-        for validation_task in validation_tasks:
-            validation_task.terminate()
+        # terminating data fetching processes
+        for training_task in training_tasks:
+            training_task.terminate()
+        if val_iter:
+            for validation_task in validation_tasks:
+                validation_task.terminate()
 
 if __name__ == "__main__":
     args = parse_args()
@@ -230,7 +249,8 @@ if __name__ == "__main__":
 
     threads = args.threads  # 4 every 4 epoch shuffle the indices
     print("using {} threads".format(threads))
-    training_dbs  = [datasets[dataset](configs["db"], train_split) for _ in range(threads)]
+    num_training_dbs = max(threads, 1)
+    training_dbs  = [datasets[dataset](configs["db"], train_split) for _ in range(num_training_dbs)]
     validation_db = datasets[dataset](configs["db"], val_split)
 
     # print("system config...")
@@ -243,4 +263,4 @@ if __name__ == "__main__":
     print("len of testing db: {}".format(len(validation_db.db_inds)))
 
     print("freeze the pretrained network: {}".format(args.freeze))
-    train(training_dbs, validation_db, args.start_iter, args.freeze) # 0
+    train(training_dbs, validation_db, args.start_iter, args.freeze, use_prefetch=threads > 0) # 0

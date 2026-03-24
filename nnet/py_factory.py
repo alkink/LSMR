@@ -42,6 +42,7 @@ class DummyModule(nn.Module):
 class NetworkFactory(object):
     def __init__(self, flag=False):
         super(NetworkFactory, self).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         module_file = "models.{}".format(system_configs.snapshot_name)
         # print("module_file: {}".format(module_file)) # models.CornerNet
@@ -52,6 +53,7 @@ class NetworkFactory(object):
         self.network = Network(self.model, self.loss)
         self.network = DataParallel(self.network, chunk_sizes=system_configs.chunk_sizes)
         self.flag    = flag
+        self.network.to(self.device)
 
         # Count total parameters
         total_params = 0
@@ -61,13 +63,17 @@ class NetworkFactory(object):
                 num_params *= x
             total_params += num_params
         print("Total parameters: {}".format(total_params))
+        print("Device: {}".format(self.device))
 
-        # Count MACs when input is 360 x 640 x 3
-        input_test = torch.randn(1, 3, 360, 640).cuda()
-        input_mask = torch.randn(1, 3, 360, 640).cuda()
-        macs, params, = profile(self.model, inputs=(input_test, input_mask), verbose=False)
-        macs, _ = clever_format([macs, params], "%.3f")
-        print('MACs: {}'.format(macs))
+        # Count MACs when input is 360 x 640 x 3. Skip on CPU to keep local smoke usable.
+        if self.device.type == "cuda":
+            input_test = torch.randn(1, 3, 360, 640, device=self.device)
+            input_mask = torch.randn(1, 3, 360, 640, device=self.device)
+            macs, params, = profile(self.model, inputs=(input_test, input_mask), verbose=False)
+            macs, _ = clever_format([macs, params], "%.3f")
+            print('MACs: {}'.format(macs))
+        else:
+            print('MACs: skipped on CPU')
 
 
         if system_configs.opt_algo == "adam":
@@ -90,7 +96,11 @@ class NetworkFactory(object):
             raise ValueError("unknown optimizer")
 
     def cuda(self):
-        self.model.cuda()
+        self.network.to(self.device)
+
+    def _move_batch(self, tensors):
+        non_blocking = self.device.type == "cuda"
+        return [tensor.to(self.device, non_blocking=non_blocking) for tensor in tensors]
 
     def train_mode(self):
         self.network.train()
@@ -105,8 +115,8 @@ class NetworkFactory(object):
               xs,
               ys,
               **kwargs):
-        xs = [x.cuda(non_blocking=True) for x in xs]
-        ys = [y.cuda(non_blocking=True) for y in ys]
+        xs = self._move_batch(xs)
+        ys = self._move_batch(ys)
 
         self.optimizer.zero_grad()
         loss_kp = self.network(iteration,
@@ -133,8 +143,8 @@ class NetworkFactory(object):
                  **kwargs):
 
         with torch.no_grad():
-            xs = [x.cuda(non_blocking=True) for x in xs]
-            ys = [y.cuda(non_blocking=True) for y in ys]
+            xs = self._move_batch(xs)
+            ys = self._move_batch(ys)
             loss_kp = self.network(iteration,
                                    save,
                                    viz_split,

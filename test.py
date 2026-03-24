@@ -67,6 +67,7 @@ def test(db, split, testiter,
     print("loading parameters...")
     nnet.load_params(test_iter)
     nnet.cuda()
+    print("evaluation device: {}".format(nnet.device))
     nnet.eval_mode()
 
     evaluator = Evaluator(db, result_dir)
@@ -93,10 +94,14 @@ def test(db, split, testiter,
 if __name__ == "__main__":
     args = parse_args()
 
-    if args.suffix is None:
-        cfg_file = os.path.join(system_configs.config_dir, args.cfg_file + ".json")
-    else:
-        cfg_file = os.path.join(system_configs.config_dir, args.cfg_file + "-{}.json".format(args.suffix))
+    cfg_file = os.path.join(system_configs.config_dir, args.cfg_file + ".json")
+    if args.suffix is not None:
+        suffixed_cfg_file = os.path.join(
+            system_configs.config_dir,
+            args.cfg_file + "-{}.json".format(args.suffix)
+        )
+        if os.path.exists(suffixed_cfg_file):
+            cfg_file = suffixed_cfg_file
     print("cfg_file: {}".format(cfg_file))
 
     with open(cfg_file, "r") as f:

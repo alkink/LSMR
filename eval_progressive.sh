@@ -1,13 +1,15 @@
 #!/bin/bash
 # Parametrik CULane evaluation — progressive scaling için
-# Kullanım: bash eval_progressive.sh <config_name> <iter>
+# Kullanım: bash eval_progressive.sh <config_name> <iter> [suffix]
 # Örnek:    bash eval_progressive.sh LSTR_CULANE_100_baseline 800
+# Örnek:    bash eval_progressive.sh LSTR_CULANE_2k_condlstr_parity_base 12500 thr03
 
 # Güvenli shell ayarları
 set -euo pipefail
 
 CONFIG=${1:-"LSTR_CULANE_100_baseline"}
 ITER=${2:-"800"}
+SUFFIX=${3:-""}
 
 root="../results/${CONFIG}"
 data_dir="../../CULane/"
@@ -21,8 +23,14 @@ frame=1
 list="${data_dir}list/test.txt"
 out="${root}/${ITER}_iou${iou}.txt"
 
+if [ -n "${SUFFIX}" ]; then
+    detect_dir="${detect_dir}/${SUFFIX}"
+    out="${root}/${ITER}_${SUFFIX}_iou${iou}.txt"
+fi
+
 echo "Config    : ${CONFIG}"
 echo "Iteration : ${ITER}"
+echo "Suffix    : ${SUFFIX:-<none>}"
 echo "detect_dir: ${detect_dir}"
 echo "Output    : ${out}"
 echo ""

@@ -309,8 +309,7 @@ class Config:
 
     def update_config(self, new):
         for key in new:
-            if key in self._configs:
-                self._configs[key] = new[key]
+            self._configs[key] = new[key]
 
         # Keep remote-server data_root override effective even after JSON config load.
         env_data_dir = os.environ.get("LSTR_DATA_DIR")

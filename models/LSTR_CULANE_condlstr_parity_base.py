@@ -13,6 +13,7 @@ from models.LSTR_CULANE import model as _BaseTransformerModel
 from models.condlstr_dense_matcher import CondLSTRDenseHungarianMatcher
 from models.condlstr_parity_criterion import CondLSTRParitySetCriterion
 from models.condlstr_parity_head import CondLSTRParityHead
+from models.parity_stdc_res34_backbone import STDCResNet34Backbone
 from models.py_utils.misc import reduce_dict
 from utils.condlstr_parity_targets import build_parity_targets_from_legacy_targets
 
@@ -31,6 +32,15 @@ class model(_BaseTransformerModel):
         branch_hidden_dim = int(system_configs.full.get('dense_branch_hidden_dim', 256))
         use_coords = bool(system_configs.full.get('dense_use_coords', False))
         self.mask_downscale = int(system_configs.full.get('condlstr_mask_downscale', 1))
+        self.parity_backbone_mode = str(system_configs.full.get('parity_backbone', 'lstr')).lower()
+        self.parity_backbone = None
+        if self.parity_backbone_mode == 'stdc_res34':
+            self.parity_backbone = STDCResNet34Backbone(
+                pretrained=bool(system_configs.full.get('parity_backbone_pretrained', False)),
+                norm_layer=nn.BatchNorm2d,
+            )
+        elif self.parity_backbone_mode != 'lstr':
+            raise ValueError(f"Unsupported parity_backbone={self.parity_backbone_mode!r}")
 
         self.parity_head = CondLSTRParityHead(
             feature_channels=int(system_configs.attn_dim),
@@ -44,12 +54,13 @@ class model(_BaseTransformerModel):
 
         print(
             "[LSTR_CULANE_condlstr_parity_base] "
+            f"backbone={self.parity_backbone_mode} "
             f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, use_coords={use_coords})"
         )
 
-    def _train(self, *xs, **kwargs):
-        images = xs[0]
-        masks = xs[1]
+    def _extract_backbone_features(self, images: torch.Tensor) -> torch.Tensor:
+        if self.parity_backbone is not None:
+            return self.parity_backbone(images)
 
         p = self.conv1(images)
         p = self.bn1(p)
@@ -59,6 +70,13 @@ class model(_BaseTransformerModel):
         p = self.layer2(p)
         p = self.layer3(p)
         p = self.layer4(p)
+        return p
+
+    def _train(self, *xs, **kwargs):
+        images = xs[0]
+        masks = xs[1]
+
+        p = self._extract_backbone_features(images)
 
         pmasks = F.interpolate(masks[:, 0, :, :][None], size=p.shape[-2:]).to(torch.bool)[0]
         pos = self.position_embedding(p, pmasks)

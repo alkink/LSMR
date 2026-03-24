@@ -3,6 +3,7 @@ import cv2
 import time
 import torch.nn.functional as F
 import torch
+import numpy as np
 from torch import nn
 from tqdm import tqdm
 from config import system_configs
@@ -77,10 +78,17 @@ class PostProcess(nn.Module):
             if outputs.get('postprocess_mode') == 'condlstr_parity':
                 if parity_outputs_to_lane_coords is None:
                     raise ImportError('parity_outputs_to_lane_coords import failed; check models.condlstr_parity_postprocess')
+                score_thresh = outputs.get('score_thresh')
+                if score_thresh is None:
+                    env_score_thresh = os.environ.get('LSTR_PARITY_SCORE_THRESH')
+                    if env_score_thresh is not None:
+                        score_thresh = float(env_score_thresh)
+                    else:
+                        score_thresh = float(system_configs.full.get('condlstr_score_thresh', 0.7))
                 return parity_outputs_to_lane_coords(
                     outputs=outputs,
                     target_sizes=target_sizes,
-                    score_thresh=float(outputs.get('score_thresh', 0.7)),
+                    score_thresh=float(score_thresh),
                     min_points=2,
                 )
 
@@ -127,6 +135,9 @@ class PostProcess(nn.Module):
 
 def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
                  isEncAttn=False, isDecAttn=False):
+    device = getattr(nnet, 'device', torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+    non_blocking = device.type == 'cuda'
+
     if db.split != "train":
         db_inds = db.db_inds if debug else db.db_inds
     else:
@@ -150,9 +161,9 @@ def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
             images = np.zeros((1, 3, input_size[0], input_size[1]), dtype=np.float32)
             masks = np.ones((1, 1, input_size[0], input_size[1]), dtype=np.float32)
             if hasattr(db, 'img_h') and hasattr(db, 'img_w'):
-                orig_target_sizes = torch.tensor([db.img_h, db.img_w]).unsqueeze(0).cuda()
+                orig_target_sizes = torch.tensor([db.img_h, db.img_w], device=device).unsqueeze(0)
             else:
-                orig_target_sizes = torch.tensor(input_size).unsqueeze(0).cuda()
+                orig_target_sizes = torch.tensor(input_size, device=device).unsqueeze(0)
             pad_image     = image.copy()
             pad_mask      = np.zeros((height, width, 1), dtype=np.float32)
             resized_image = cv2.resize(pad_image, (input_size[1], input_size[0]))
@@ -162,12 +173,12 @@ def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
             normalize_(resized_image, db.mean, db.std)
             resized_image = resized_image.transpose(2, 0, 1)
             images[0] = resized_image
-            images = torch.from_numpy(images).cuda(non_blocking=True)
-            masks = torch.from_numpy(masks).cuda(non_blocking=True)
+            images = torch.from_numpy(images).to(device, non_blocking=non_blocking)
+            masks = torch.from_numpy(masks).to(device, non_blocking=non_blocking)
 
             # seeking better FPS performance
-            images = images.repeat(repeat, 1, 1, 1).cuda(non_blocking=True)
-            masks = masks.repeat(repeat, 1, 1, 1).cuda(non_blocking=True)
+            images = images.repeat(repeat, 1, 1, 1)
+            masks = masks.repeat(repeat, 1, 1, 1)
             orig_target_sizes = orig_target_sizes.repeat(repeat, 1)
 
             conv_features, enc_attn_weights, dec_attn_weights = [], [], []
@@ -180,10 +191,12 @@ def kp_detection(db, nnet, result_dir, debug=False, evaluator=None, repeat=1,
                     nnet.model.module.transformer.decoder.layers[-1].multihead_attn.register_forward_hook(
                         lambda self, input, output: dec_attn_weights.append(output[1]))
                 ]
-            torch.cuda.synchronize(0)  # 0 is the GPU id
+            if device.type == 'cuda':
+                torch.cuda.synchronize(device)
             t0            = time.time()
             outputs, weights = nnet.test([images, masks])
-            torch.cuda.synchronize(0)  # 0 is the GPU id
+            if device.type == 'cuda':
+                torch.cuda.synchronize(device)
             t             = time.time() - t0
 
             # below codes are used for drawing attention maps
