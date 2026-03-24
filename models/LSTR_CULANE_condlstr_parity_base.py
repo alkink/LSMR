@@ -27,6 +27,25 @@ def _resize_dense_map(tensor: torch.Tensor, output_size: Tuple[int, int]) -> tor
     return tensor.view(batch_size, num_queries, output_size[0], output_size[1])
 
 
+def _build_dn_decoder_attention_mask(
+    num_main_queries: int,
+    num_dn_queries: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if num_dn_queries <= 0:
+        return None
+
+    total_queries = int(num_main_queries) + int(num_dn_queries)
+    attn_mask = torch.zeros((total_queries, total_queries), dtype=torch.bool, device=device)
+    main_slice = slice(0, int(num_main_queries))
+    dn_slice = slice(int(num_main_queries), total_queries)
+
+    # Keep the matching queries isolated from denoising queries.
+    attn_mask[main_slice, dn_slice] = True
+    attn_mask[dn_slice, main_slice] = True
+    return attn_mask
+
+
 class model(_BaseTransformerModel):
     def __init__(self, flag: bool = False):
         super().__init__(flag=flag)
@@ -109,6 +128,7 @@ class model(_BaseTransformerModel):
         pos = self.position_embedding(p, pmasks)
         query_embed: torch.Tensor = self.query_embed.weight
         dn_meta = None
+        dn_tgt_mask = None
         if self.training and self.dn_lane_enabled and targets is not None:
             dense_targets = build_parity_targets_from_legacy_targets(
                 targets=targets,
@@ -127,6 +147,11 @@ class model(_BaseTransformerModel):
             learned_queries = self.query_embed.weight.unsqueeze(0).expand(images.size(0), -1, -1)
             dn_query_embed = self.dn_query_encoder(dn_queries) + self.dn_query_type_embed.view(1, 1, -1)
             query_embed = torch.cat((learned_queries, dn_query_embed), dim=1)
+            dn_tgt_mask = _build_dn_decoder_attention_mask(
+                num_main_queries=int(self.query_embed.weight.shape[0]),
+                num_dn_queries=int(dn_queries.shape[1]),
+                device=images.device,
+            )
             dn_meta = {
                 'num_main_queries': int(self.query_embed.weight.shape[0]),
                 'num_dn_queries': int(dn_queries.shape[1]),
@@ -134,7 +159,7 @@ class model(_BaseTransformerModel):
                 'targets': dn_targets,
             }
 
-        hs, memory, weights = self.transformer(self.input_proj(p), pmasks, query_embed, pos)
+        hs, memory, weights = self.transformer(self.input_proj(p), pmasks, query_embed, pos, tgt_mask=dn_tgt_mask)
 
         query_features_per_layer = [layer_output for layer_output in hs]
         feature_maps = [memory] * len(query_features_per_layer)
