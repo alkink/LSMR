@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import os
 from typing import Dict, List, Tuple
@@ -11,6 +12,7 @@ import torch.nn.functional as F
 from config import system_configs
 from models.LSTR_CULANE import model as _BaseTransformerModel
 from models.condlstr_dense_matcher import CondLSTRDenseHungarianMatcher
+from models.condlstr_dn_lane import build_dn_lane_queries
 from models.condlstr_parity_criterion import CondLSTRParitySetCriterion
 from models.condlstr_parity_head import CondLSTRParityHead
 from models.parity_stdc_res34_backbone import STDCResNet34Backbone
@@ -32,6 +34,10 @@ class model(_BaseTransformerModel):
         branch_hidden_dim = int(system_configs.full.get('dense_branch_hidden_dim', 256))
         use_coords = bool(system_configs.full.get('dense_use_coords', False))
         self.mask_downscale = int(system_configs.full.get('condlstr_mask_downscale', 1))
+        self.dn_lane_num_queries = int(system_configs.full.get('dn_lane_num_queries', 0))
+        self.dn_lane_x_noise_scale = float(system_configs.full.get('dn_lane_x_noise_scale', 0.05))
+        self.dn_lane_range_noise_scale = float(system_configs.full.get('dn_lane_range_noise_scale', 0.03))
+        self.dn_lane_enabled = self.dn_lane_num_queries > 0
         self.parity_backbone_mode = str(system_configs.full.get('parity_backbone', 'lstr')).lower()
         self.parity_backbone = None
         if self.parity_backbone_mode == 'stdc_res34':
@@ -51,12 +57,28 @@ class model(_BaseTransformerModel):
             reg_out_channels=1,
             use_coords=use_coords,
         )
+        if self.dn_lane_enabled:
+            self.dn_query_encoder = nn.Sequential(
+                nn.Linear(8, int(system_configs.attn_dim)),
+                nn.ReLU(inplace=True),
+                nn.Linear(int(system_configs.attn_dim), int(system_configs.attn_dim)),
+            )
+            self.dn_query_type_embed = nn.Parameter(torch.zeros(int(system_configs.attn_dim)))
+        else:
+            self.dn_query_encoder = None
+            self.dn_query_type_embed = None
 
         print(
             "[LSTR_CULANE_condlstr_parity_base] "
             f"backbone={self.parity_backbone_mode} "
             f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, use_coords={use_coords})"
         )
+        if self.dn_lane_enabled:
+            print(
+                "[LSTR_CULANE_condlstr_parity_base] "
+                f"dn_lane enabled: num_queries={self.dn_lane_num_queries}, "
+                f"x_noise={self.dn_lane_x_noise_scale}, range_noise={self.dn_lane_range_noise_scale}"
+            )
 
     def _extract_backbone_features(self, images: torch.Tensor) -> torch.Tensor:
         if self.parity_backbone is not None:
@@ -75,20 +97,48 @@ class model(_BaseTransformerModel):
     def _train(self, *xs, **kwargs):
         images = xs[0]
         masks = xs[1]
+        targets = kwargs.get('targets')
+        output_size = (
+            int(images.shape[-2] // max(self.mask_downscale, 1)),
+            int(images.shape[-1] // max(self.mask_downscale, 1)),
+        )
 
         p = self._extract_backbone_features(images)
 
         pmasks = F.interpolate(masks[:, 0, :, :][None], size=p.shape[-2:]).to(torch.bool)[0]
         pos = self.position_embedding(p, pmasks)
-        hs, memory, weights = self.transformer(self.input_proj(p), pmasks, self.query_embed.weight, pos)
+        query_embed: torch.Tensor = self.query_embed.weight
+        dn_meta = None
+        if self.training and self.dn_lane_enabled and targets is not None:
+            dense_targets = build_parity_targets_from_legacy_targets(
+                targets=targets,
+                target_size=output_size,
+                device=images.device,
+                line_width=float(system_configs.full.get('dense_line_width', 16.0)),
+                min_valid_rows=int(system_configs.full.get('dense_min_valid_rows', 2)),
+            )
+            dn_queries, dn_targets, dn_valid_counts = build_dn_lane_queries(
+                targets=dense_targets,
+                num_dn_queries=self.dn_lane_num_queries,
+                feature_width=output_size[1],
+                x_noise_scale=self.dn_lane_x_noise_scale,
+                range_noise_scale=self.dn_lane_range_noise_scale,
+            )
+            learned_queries = self.query_embed.weight.unsqueeze(0).expand(images.size(0), -1, -1)
+            dn_query_embed = self.dn_query_encoder(dn_queries) + self.dn_query_type_embed.view(1, 1, -1)
+            query_embed = torch.cat((learned_queries, dn_query_embed), dim=1)
+            dn_meta = {
+                'num_main_queries': int(self.query_embed.weight.shape[0]),
+                'num_dn_queries': int(dn_queries.shape[1]),
+                'valid_counts': dn_valid_counts,
+                'targets': dn_targets,
+            }
+
+        hs, memory, weights = self.transformer(self.input_proj(p), pmasks, query_embed, pos)
 
         query_features_per_layer = [layer_output for layer_output in hs]
         feature_maps = [memory] * len(query_features_per_layer)
         per_layer_outputs = self.parity_head(feature_map=feature_maps, query_features=query_features_per_layer)
-        output_size = (
-            int(images.shape[-2] // max(self.mask_downscale, 1)),
-            int(images.shape[-1] // max(self.mask_downscale, 1)),
-        )
 
         formatted_outputs: List[Dict[str, torch.Tensor]] = []
         num_layers = len(per_layer_outputs['pred_object_logits'])
@@ -101,6 +151,8 @@ class model(_BaseTransformerModel):
         final_output = dict(formatted_outputs[-1])
         final_output['aux_outputs'] = formatted_outputs[:-1]
         final_output['postprocess_mode'] = 'condlstr_parity'
+        if dn_meta is not None:
+            final_output['dn_meta'] = dn_meta
         return final_output, weights
 
     def _test(self, *xs, **kwargs):
@@ -120,6 +172,12 @@ class loss(nn.Module):
         self.debug_path = os.path.join(base_result_dir, snapshot_name) if snapshot_name else base_result_dir
         self.line_width = float(system_configs.full.get('dense_line_width', 16.0))
         self.min_valid_rows = int(system_configs.full.get('dense_min_valid_rows', 2))
+        self.dn_lane_num_queries = int(system_configs.full.get('dn_lane_num_queries', 0))
+        self.dn_lane_loss_weight = float(system_configs.full.get('dn_lane_loss_weight', 1.0))
+        self.match_diag_enabled = bool(system_configs.full.get('match_diag_enabled', False))
+        self.match_diag_interval = max(int(system_configs.full.get('match_diag_interval', 500)), 1)
+        self.match_diag_path = os.path.join(self.debug_path, 'match_diag_train.jsonl')
+        os.makedirs(self.debug_path, exist_ok=True)
 
         self.weight_dict = {
             'loss_object': float(system_configs.full.get('dense_loss_object_weight', 10.0)),
@@ -128,10 +186,22 @@ class loss(nn.Module):
             'loss_reg': float(system_configs.full.get('dense_loss_reg_weight', 1.0)),
             'loss_range': float(system_configs.full.get('dense_loss_range_weight', 20.0)),
         }
+        if self.dn_lane_num_queries > 0 and self.dn_lane_loss_weight > 0.0:
+            self.weight_dict.update(
+                {
+                    'loss_dn_object': self.weight_dict['loss_object'] * self.dn_lane_loss_weight,
+                    'loss_dn_class': self.weight_dict['loss_class'] * self.dn_lane_loss_weight,
+                    'loss_dn_loc': self.weight_dict['loss_loc'] * self.dn_lane_loss_weight,
+                    'loss_dn_reg': self.weight_dict['loss_reg'] * self.dn_lane_loss_weight,
+                    'loss_dn_range': self.weight_dict['loss_range'] * self.dn_lane_loss_weight,
+                }
+            )
         base_weight_dict = dict(self.weight_dict)
         aux_weight_dict = {}
         for layer_index in range(max(int(system_configs.dec_layers) - 1, 0)):
             for name, value in base_weight_dict.items():
+                if name.startswith('loss_dn_'):
+                    continue
                 aux_weight_dict[f'{name}_{layer_index}'] = value
         self.weight_dict.update(aux_weight_dict)
 
@@ -152,8 +222,18 @@ class loss(nn.Module):
 
         print(f"[LSTR_CULANE_condlstr_parity_base] weight_dict: {self.weight_dict}")
 
-    def forward(self, iteration, save, viz_split, outputs, targets):
-        del iteration, save, viz_split
+    def _append_match_diagnostics(self, iteration: int, diagnostics: List[Dict[str, object]]) -> None:
+        if not diagnostics:
+            return
+        os.makedirs(os.path.dirname(self.match_diag_path), exist_ok=True)
+        with open(self.match_diag_path, 'a', encoding='utf-8') as handle:
+            for payload in diagnostics:
+                record = {'iteration': int(iteration)}
+                record.update(payload)
+                handle.write(json.dumps(record, ensure_ascii=True) + '\n')
+
+    def forward(self, iteration, save, viz_split, outputs, targets, **kwargs):
+        del save, viz_split
 
         spatial_size = (int(outputs['pred_dense_mask'].shape[-2]), int(outputs['pred_dense_mask'].shape[-1]))
         dense_targets = build_parity_targets_from_legacy_targets(
@@ -163,8 +243,16 @@ class loss(nn.Module):
             line_width=self.line_width,
             min_valid_rows=self.min_valid_rows,
         )
+        collect_diagnostics = self.match_diag_enabled and (int(iteration) % self.match_diag_interval == 0)
 
-        loss_dict, _ = self.criterion(outputs, dense_targets)
+        loss_dict, _, diagnostics = self.criterion(
+            outputs,
+            dense_targets,
+            image_keys=kwargs.get('image_keys'),
+            collect_diagnostics=collect_diagnostics,
+        )
+        if diagnostics:
+            self._append_match_diagnostics(int(iteration), diagnostics)
         loss_dict['class_error'] = outputs['pred_object_logits'].new_tensor(0.0)
         total = sum(
             loss_dict[name] * self.weight_dict[name]

@@ -19,7 +19,7 @@ class Network(nn.Module):
     def forward(self, iteration, save, viz_split,
                 xs, ys, **kwargs):
 
-        preds, weights = self.model(*xs, **kwargs)
+        preds, weights = self.model(*xs, targets=ys, **kwargs)
 
         loss  = self.loss(iteration,
                           save,
@@ -119,11 +119,13 @@ class NetworkFactory(object):
         ys = self._move_batch(ys)
 
         self.optimizer.zero_grad()
+        forward_kwargs = dict(kwargs)
         loss_kp = self.network(iteration,
                                save,
                                viz_split,
                                xs,
-                               ys)
+                               ys,
+                               **forward_kwargs)
 
         loss      = loss_kp[0]
         loss_dict = loss_kp[1:]
@@ -145,11 +147,13 @@ class NetworkFactory(object):
         with torch.no_grad():
             xs = self._move_batch(xs)
             ys = self._move_batch(ys)
+            forward_kwargs = dict(kwargs)
             loss_kp = self.network(iteration,
                                    save,
                                    viz_split,
                                    xs,
-                                   ys)
+                                   ys,
+                                   **forward_kwargs)
             loss      = loss_kp[0]
             loss_dict = loss_kp[1:]
             loss      = loss.mean()

@@ -49,8 +49,20 @@ class Transformer(nn.Module):
         src = src.flatten(2).permute(2, 0, 1)
 
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
-
-        query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+        if query_embed.dim() == 2:
+            query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
+        elif query_embed.dim() == 3:
+            if query_embed.shape[0] == bs:
+                query_embed = query_embed.permute(1, 0, 2).contiguous()
+            elif query_embed.shape[1] != bs:
+                raise ValueError(
+                    "3D query_embed must have shape [B, Q, C] or [Q, B, C], "
+                    f"got {tuple(query_embed.shape)} for batch size {bs}"
+                )
+        else:
+            raise ValueError(
+                f"query_embed must be 2D [Q, C] or 3D [B, Q, C], got {tuple(query_embed.shape)}"
+            )
 
         mask = mask.flatten(1)
 

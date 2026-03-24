@@ -22,6 +22,7 @@ def kp_detection(db, k_ind):
     images   = np.zeros((batch_size, 3, input_size[0], input_size[1]), dtype=np.float32) # b, 3, H, W
     masks    = np.zeros((batch_size, 1, input_size[0], input_size[1]), dtype=np.float32)  # b, 1, H, W
     gt_lanes = []
+    image_keys = []
 
     db_size = db.db_inds.size # 3268 | 2782
 
@@ -38,6 +39,7 @@ def kp_detection(db, k_ind):
         img   = cv2.imread(item['path'])
         mask  = np.ones((1, img.shape[0], img.shape[1], 1), dtype=bool)
         label = item['label']
+        image_keys.append(item['old_anno'].get('org_path', item['path']))
         transform = True
         if transform:
             line_strings = db.lane_to_linestrings(item['old_anno']['lanes'])
@@ -77,11 +79,11 @@ def kp_detection(db, k_ind):
 
     return {
                "xs": [images, masks],
-               "ys": [images, *gt_lanes]
+               "ys": [images, *gt_lanes],
+               "image_keys": image_keys,
            }, k_ind
 
 
 def sample_data(db, k_ind):
     return globals()[system_configs.sampling_function](db, k_ind)
-
 
