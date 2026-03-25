@@ -22,7 +22,8 @@ from db.datasets import datasets
 import models.py_utils.misc as utils
 
 torch.backends.cudnn.enabled   = True
-torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train CornerNet")
@@ -41,11 +42,22 @@ def make_dirs(directories):
         if not os.path.exists(directory):
             os.makedirs(directory)
 
-def prefetch_data(db, queue, sample_data):
+def _set_global_seed(seed):
+    seed = int(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def prefetch_data(db, queue, sample_data, worker_rank=0):
     ind = 0
     print("start prefetching data...")
-    np.random.seed(int(system_configs.full.get("seed", 317)) + int(os.getpid()))
-    random.seed(int(system_configs.full.get("seed", 317)) + int(os.getpid()))
+    worker_seed = int(system_configs.full.get("seed", 317)) + int(worker_rank)
+    _set_global_seed(worker_seed)
+    if hasattr(db, "_data_rng"):
+        db._data_rng = np.random.RandomState(worker_seed)
     while True:
         try:
             data, ind = sample_data(db, ind)
@@ -80,7 +92,8 @@ def pin_memory(data_queue, pinned_data_queue, sema):
         pinned_data_queue.put(data)
 
 def init_parallel_jobs(dbs, queue, fn):
-    tasks = [Process(target=prefetch_data, args=(db, queue, fn)) for db in dbs]
+    tasks = [Process(target=prefetch_data, args=(db, queue, fn, worker_rank))
+             for worker_rank, db in enumerate(dbs)]
     for task in tasks:
         task.daemon = True
         task.start()
@@ -241,6 +254,7 @@ if __name__ == "__main__":
 
     configs["system"]["snapshot_name"] = args.cfg_file  # CornerNet
     system_configs.update_config(configs["system"])
+    _set_global_seed(system_configs.seed)
 
     train_split = system_configs.train_split
     val_split   = system_configs.val_split

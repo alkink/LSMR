@@ -144,6 +144,10 @@ int main(int argc, char **argv)
 	for (size_t i = 0; i < filelists.size(); i++)
 	{
 		auto sub_im_name = filelists[i];
+		if(!sub_im_name.empty() && sub_im_name[0] != '/')
+		{
+			sub_im_name = "/" + sub_im_name;
+		}
 		string full_im_name = im_dir + sub_im_name;
 		string sub_txt_name =  sub_im_name.substr(0, sub_im_name.find_last_of(".")) + ".lines.txt";
 		string anno_file_name = anno_dir + sub_txt_name;

@@ -19,6 +19,15 @@ from db.datasets import datasets
 from db.utils.evaluator import Evaluator
 
 torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+
+
+def _set_global_seed(seed):
+    seed = int(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Test CornerNet")
@@ -109,6 +118,7 @@ if __name__ == "__main__":
             
     configs["system"]["snapshot_name"] = args.cfg_file
     system_configs.update_config(configs["system"])
+    _set_global_seed(system_configs.seed)
 
     train_split = system_configs.train_split
     val_split   = system_configs.val_split
