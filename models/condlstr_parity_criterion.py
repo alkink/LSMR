@@ -68,7 +68,16 @@ class CondLSTRParitySetCriterion(nn.Module):
                 dn_valid_counts=dn_meta['valid_counts'],
             )
             loss_dict.update(dn_loss_dict)
+        else:
+            dn_outputs = None
 
+        if diagnostics:
+            self._attach_output_diagnostics(
+                diagnostics=diagnostics,
+                main_outputs=main_outputs,
+                dn_outputs=dn_outputs,
+                dn_valid_counts=dn_meta['valid_counts'] if dn_meta is not None else None,
+            )
         return loss_dict, indices, diagnostics
 
     def _slice_outputs_for_queries(
@@ -316,25 +325,38 @@ class CondLSTRParitySetCriterion(nn.Module):
                 image_key = image_keys[batch_index]
 
             assignments = []
-            margins = []
+            query_margins = []
+            target_competition = []
+            target_margins = []
             for query_index, target_index in zip(src_idx.tolist(), tgt_idx.tolist()):
                 total_row = breakdown.total_cost[query_index]
                 match_cost = float(total_row[target_index].item())
                 if total_row.numel() > 1:
                     competing = torch.cat((total_row[:target_index], total_row[target_index + 1:]))
-                    second_best = float(competing.min().item())
-                    margin = second_best - match_cost
-                    margins.append(margin)
+                    second_best_target_cost = float(competing.min().item())
+                    query_margin = second_best_target_cost - match_cost
+                    query_margins.append(query_margin)
                 else:
-                    second_best = None
-                    margin = None
+                    second_best_target_cost = None
+                    query_margin = None
+
+                total_col = breakdown.total_cost[:, target_index]
+                if total_col.numel() > 1:
+                    competing_queries = torch.cat((total_col[:query_index], total_col[query_index + 1:]))
+                    second_best_query_cost = float(competing_queries.min().item())
+                    target_margin = second_best_query_cost - match_cost
+                    target_margins.append(target_margin)
+                else:
+                    second_best_query_cost = None
+                    target_margin = None
 
                 assignments.append(
                     {
                         'query': int(query_index),
                         'target': int(target_index),
                         'cost_total': match_cost,
-                        'margin_to_second': margin,
+                        'query_margin_to_second_target': query_margin,
+                        'target_margin_to_second_query': target_margin,
                         'cost_object': float(breakdown.cost_object[query_index, target_index].item()),
                         'cost_class': float(breakdown.cost_class[query_index, target_index].item()),
                         'cost_row_location': float(breakdown.cost_row_location[query_index, target_index].item()),
@@ -343,12 +365,27 @@ class CondLSTRParitySetCriterion(nn.Module):
                         'cost_row_range': float(breakdown.cost_row_range[query_index, target_index].item()),
                     }
                 )
+                target_competition.append(
+                    {
+                        'target': int(target_index),
+                        'query': int(query_index),
+                        'best_query_cost': match_cost,
+                        'second_best_query_cost': second_best_query_cost,
+                        'margin_to_second_query': target_margin,
+                    }
+                )
 
-            mean_margin = float(sum(margins) / len(margins)) if margins else None
-            min_margin = float(min(margins)) if margins else None
-            low_margin_ratio = (
-                float(sum(1 for margin in margins if margin < 1.0) / len(margins))
-                if margins else None
+            mean_query_margin = float(sum(query_margins) / len(query_margins)) if query_margins else None
+            min_query_margin = float(min(query_margins)) if query_margins else None
+            low_query_margin_ratio = (
+                float(sum(1 for margin in query_margins if margin < 1.0) / len(query_margins))
+                if query_margins else None
+            )
+            mean_target_margin = float(sum(target_margins) / len(target_margins)) if target_margins else None
+            min_target_margin = float(min(target_margins)) if target_margins else None
+            low_target_margin_ratio = (
+                float(sum(1 for margin in target_margins if margin < 1.0) / len(target_margins))
+                if target_margins else None
             )
 
             diagnostics.append(
@@ -356,14 +393,62 @@ class CondLSTRParitySetCriterion(nn.Module):
                     'image_key': image_key,
                     'num_targets': int(target['gt_row_rng'].size(0)),
                     'num_matches': int(src_idx.numel()),
-                    'mean_margin': mean_margin,
-                    'min_margin': min_margin,
-                    'low_margin_ratio': low_margin_ratio,
+                    'mean_query_margin': mean_query_margin,
+                    'min_query_margin': min_query_margin,
+                    'low_query_margin_ratio': low_query_margin_ratio,
+                    'mean_target_margin': mean_target_margin,
+                    'min_target_margin': min_target_margin,
+                    'low_target_margin_ratio': low_target_margin_ratio,
                     'assignments': assignments,
+                    'target_competition': target_competition,
                 }
             )
 
         return diagnostics
+
+    def _attach_output_diagnostics(
+        self,
+        diagnostics: List[Dict[str, object]],
+        main_outputs: Dict[str, torch.Tensor],
+        dn_outputs: Dict[str, torch.Tensor] | None,
+        dn_valid_counts: torch.Tensor | None,
+    ) -> None:
+        main_fg_probs = F.softmax(main_outputs['pred_object_logits'], dim=-1)[..., 0]
+
+        def _stats(values: torch.Tensor) -> Dict[str, float | int]:
+            if values.numel() == 0:
+                return {
+                    'count': 0,
+                    'mean': 0.0,
+                    'std': 0.0,
+                    'max': 0.0,
+                    'p_gt_03': 0,
+                    'p_gt_05': 0,
+                    'top3_mean': 0.0,
+                }
+            flat = values.reshape(-1).float()
+            topk = min(3, int(flat.numel()))
+            return {
+                'count': int(flat.numel()),
+                'mean': float(flat.mean().item()),
+                'std': float(flat.std(unbiased=False).item()),
+                'max': float(flat.max().item()),
+                'p_gt_03': int((flat > 0.3).sum().item()),
+                'p_gt_05': int((flat > 0.5).sum().item()),
+                'top3_mean': float(flat.topk(topk).values.mean().item()),
+            }
+
+        for batch_index, payload in enumerate(diagnostics):
+            payload['main_object_fg_stats'] = _stats(main_fg_probs[batch_index])
+            if dn_outputs is None or dn_valid_counts is None:
+                continue
+
+            dn_fg_probs = F.softmax(dn_outputs['pred_object_logits'][batch_index], dim=-1)[..., 0]
+            valid_count = int(min(int(dn_valid_counts[batch_index].item()), int(dn_fg_probs.numel())))
+            payload['dn_valid_count'] = valid_count
+            payload['dn_object_fg_stats_all'] = _stats(dn_fg_probs)
+            payload['dn_object_fg_stats_valid'] = _stats(dn_fg_probs[:valid_count])
+            payload['dn_object_fg_stats_unused'] = _stats(dn_fg_probs[valid_count:])
 
     def loss_object(
         self,
