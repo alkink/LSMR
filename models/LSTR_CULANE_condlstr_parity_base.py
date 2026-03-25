@@ -129,7 +129,8 @@ class model(_BaseTransformerModel):
         query_embed: torch.Tensor = self.query_embed.weight
         dn_meta = None
         dn_tgt_mask = None
-        if self.training and self.dn_lane_enabled and targets is not None:
+        force_dn = bool(kwargs.get('force_dn', False))
+        if (self.training or force_dn) and self.dn_lane_enabled and targets is not None:
             dense_targets = build_parity_targets_from_legacy_targets(
                 targets=targets,
                 target_size=output_size,
