@@ -6,6 +6,7 @@ class Config:
         self._configs = {}
         self._configs["dataset"] = None
         self._configs["sampling_function"] = "kp_detection"
+        self._configs["seed"] = 317
 
         # Training Config
         self._configs["display"]           = 5
@@ -42,7 +43,7 @@ class Config:
 
         # Rng
         self._configs["data_rng"] = np.random.RandomState(123)
-        self._configs["nnet_rng"] = np.random.RandomState(317)
+        self._configs["nnet_rng"] = np.random.RandomState(self._configs["seed"])
 
         # MSDETR Model Setting
         self._configs["res_layers"] = [2, 2, 2, 2]
@@ -187,6 +188,10 @@ class Config:
         return self._configs["sampling_function"]
 
     @property
+    def seed(self):
+        return self._configs["seed"]
+
+    @property
     def data_rng(self):
         return self._configs["data_rng"]
 
@@ -310,6 +315,12 @@ class Config:
     def update_config(self, new):
         for key in new:
             self._configs[key] = new[key]
+
+        if "seed" in new:
+            seed = int(new["seed"])
+            self._configs["seed"] = seed
+            self._configs["data_rng"] = np.random.RandomState(seed)
+            self._configs["nnet_rng"] = np.random.RandomState(seed)
 
         # Keep remote-server data_root override effective even after JSON config load.
         env_data_dir = os.environ.get("LSTR_DATA_DIR")

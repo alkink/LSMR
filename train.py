@@ -44,7 +44,8 @@ def make_dirs(directories):
 def prefetch_data(db, queue, sample_data):
     ind = 0
     print("start prefetching data...")
-    np.random.seed(os.getpid())
+    np.random.seed(int(system_configs.full.get("seed", 317)) + int(os.getpid()))
+    random.seed(int(system_configs.full.get("seed", 317)) + int(os.getpid()))
     while True:
         try:
             data, ind = sample_data(db, ind)

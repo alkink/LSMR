@@ -7,7 +7,7 @@ from thop import profile, clever_format
 from config import system_configs
 from models.py_utils.data_parallel import DataParallel
 
-torch.manual_seed(317)
+torch.manual_seed(int(system_configs.full.get("seed", 317)))
 
 class Network(nn.Module):
     def __init__(self, model, loss):
