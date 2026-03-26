@@ -15,6 +15,7 @@ from models.condlstr_dense_matcher import CondLSTRDenseHungarianMatcher
 from models.condlstr_dn_lane import build_dn_lane_queries
 from models.condlstr_parity_criterion import CondLSTRParitySetCriterion
 from models.condlstr_parity_head import CondLSTRParityHead
+from models.condlstr_query_relation import QueryRelationBlock
 from models.parity_stdc_res34_backbone import STDCResNet34Backbone
 from models.py_utils.misc import reduce_dict
 from utils.condlstr_parity_targets import build_parity_targets_from_legacy_targets
@@ -52,8 +53,15 @@ class model(_BaseTransformerModel):
         dense_num_classes = max(int(system_configs.full.get('dense_num_classes', 1)), 1)
         branch_hidden_dim = int(system_configs.full.get('dense_branch_hidden_dim', 256))
         use_coords = bool(system_configs.full.get('dense_use_coords', False))
+        self.dense_relation_mode = str(system_configs.full.get('dense_relation_mode', 'none')).lower()
+        self.dense_relation_layers = int(system_configs.full.get('dense_relation_layers', 0))
+        self.dense_relation_heads = int(system_configs.full.get('dense_relation_heads', 4))
+        self.dense_relation_ff_dim = int(system_configs.full.get('dense_relation_ff_dim', int(system_configs.attn_dim) * 2))
+        self.dense_relation_dropout = float(system_configs.full.get('dense_relation_dropout', 0.1))
         self.dense_range_mode = str(system_configs.full.get('dense_range_mode', 'range')).lower()
         self.dense_visibility_dim = int(system_configs.full.get('dense_visibility_dim', 0))
+        if self.dense_relation_mode not in {'none', 'self_attn'}:
+            raise ValueError(f"Unsupported dense_relation_mode={self.dense_relation_mode!r}")
         if self.dense_range_mode not in {'range', 'visibility'}:
             raise ValueError(f"Unsupported dense_range_mode={self.dense_range_mode!r}")
         if self.dense_range_mode == 'visibility' and self.dense_visibility_dim <= 0:
@@ -72,6 +80,17 @@ class model(_BaseTransformerModel):
             )
         elif self.parity_backbone_mode != 'lstr':
             raise ValueError(f"Unsupported parity_backbone={self.parity_backbone_mode!r}")
+
+        if self.dense_relation_mode == 'self_attn' and self.dense_relation_layers > 0:
+            self.query_relation = QueryRelationBlock(
+                hidden_dim=int(system_configs.attn_dim),
+                num_heads=self.dense_relation_heads,
+                num_layers=self.dense_relation_layers,
+                ff_dim=self.dense_relation_ff_dim,
+                dropout=self.dense_relation_dropout,
+            )
+        else:
+            self.query_relation = None
 
         self.parity_head = CondLSTRParityHead(
             feature_channels=int(system_configs.attn_dim),
@@ -99,7 +118,8 @@ class model(_BaseTransformerModel):
             "[LSTR_CULANE_condlstr_parity_base] "
             f"backbone={self.parity_backbone_mode} "
             f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, "
-            f"use_coords={use_coords}, range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim})"
+            f"use_coords={use_coords}, range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim}, "
+            f"relation_mode={self.dense_relation_mode}, relation_layers={self.dense_relation_layers})"
         )
         if self.dn_lane_enabled:
             print(
@@ -107,6 +127,11 @@ class model(_BaseTransformerModel):
                 f"dn_lane enabled: num_queries={self.dn_lane_num_queries}, "
                 f"x_noise={self.dn_lane_x_noise_scale}, range_noise={self.dn_lane_range_noise_scale}"
             )
+
+    def _apply_query_relation(self, query_features: torch.Tensor) -> torch.Tensor:
+        if self.query_relation is None:
+            return query_features
+        return self.query_relation(query_features)
 
     def _extract_backbone_features(self, images: torch.Tensor) -> torch.Tensor:
         if self.parity_backbone is not None:
@@ -171,7 +196,7 @@ class model(_BaseTransformerModel):
 
         hs, memory, weights = self.transformer(self.input_proj(p), pmasks, query_embed, pos, tgt_mask=dn_tgt_mask)
 
-        query_features_per_layer = [layer_output for layer_output in hs]
+        query_features_per_layer = [self._apply_query_relation(layer_output) for layer_output in hs]
         feature_maps = [memory] * len(query_features_per_layer)
         per_layer_outputs = self.parity_head(feature_map=feature_maps, query_features=query_features_per_layer)
 
