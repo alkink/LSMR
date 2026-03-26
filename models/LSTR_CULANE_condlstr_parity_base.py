@@ -53,6 +53,9 @@ class model(_BaseTransformerModel):
         dense_num_classes = max(int(system_configs.full.get('dense_num_classes', 1)), 1)
         branch_hidden_dim = int(system_configs.full.get('dense_branch_hidden_dim', 256))
         use_coords = bool(system_configs.full.get('dense_use_coords', False))
+        self.dense_decoder_init_mode = str(
+            system_configs.full.get('dense_decoder_init_mode', 'legacy_query_embed')
+        ).lower()
         self.dense_relation_mode = str(system_configs.full.get('dense_relation_mode', 'none')).lower()
         self.dense_relation_layers = int(system_configs.full.get('dense_relation_layers', 0))
         self.dense_relation_heads = int(system_configs.full.get('dense_relation_heads', 4))
@@ -60,6 +63,8 @@ class model(_BaseTransformerModel):
         self.dense_relation_dropout = float(system_configs.full.get('dense_relation_dropout', 0.1))
         self.dense_range_mode = str(system_configs.full.get('dense_range_mode', 'range')).lower()
         self.dense_visibility_dim = int(system_configs.full.get('dense_visibility_dim', 0))
+        if self.dense_decoder_init_mode not in {'legacy_query_embed', 'learned_target_embed'}:
+            raise ValueError(f"Unsupported dense_decoder_init_mode={self.dense_decoder_init_mode!r}")
         if self.dense_relation_mode not in {'none', 'self_attn'}:
             raise ValueError(f"Unsupported dense_relation_mode={self.dense_relation_mode!r}")
         if self.dense_range_mode not in {'range', 'visibility'}:
@@ -80,6 +85,11 @@ class model(_BaseTransformerModel):
             )
         elif self.parity_backbone_mode != 'lstr':
             raise ValueError(f"Unsupported parity_backbone={self.parity_backbone_mode!r}")
+
+        if self.dense_decoder_init_mode == 'learned_target_embed':
+            self.decoder_target_embed = nn.Embedding(int(system_configs.num_queries), int(system_configs.attn_dim))
+        else:
+            self.decoder_target_embed = None
 
         if self.dense_relation_mode == 'self_attn' and self.dense_relation_layers > 0:
             self.query_relation = QueryRelationBlock(
@@ -118,7 +128,8 @@ class model(_BaseTransformerModel):
             "[LSTR_CULANE_condlstr_parity_base] "
             f"backbone={self.parity_backbone_mode} "
             f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, "
-            f"use_coords={use_coords}, range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim}, "
+            f"use_coords={use_coords}, decoder_init_mode={self.dense_decoder_init_mode}, "
+            f"range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim}, "
             f"relation_mode={self.dense_relation_mode}, relation_layers={self.dense_relation_layers})"
         )
         if self.dn_lane_enabled:
@@ -132,6 +143,26 @@ class model(_BaseTransformerModel):
         if self.query_relation is None:
             return query_features
         return self.query_relation(query_features)
+
+    def _build_decoder_query_inputs(
+        self,
+        batch_size: int,
+        learned_queries: torch.Tensor,
+        dn_query_embed: torch.Tensor | None = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.dense_decoder_init_mode == 'learned_target_embed':
+            main_query_pos = self.decoder_target_embed.weight.unsqueeze(0).expand(batch_size, -1, -1)
+            main_decoder_tgt = main_query_pos
+        else:
+            main_query_pos = learned_queries
+            main_decoder_tgt = learned_queries * 0.1
+
+        if dn_query_embed is None:
+            return main_query_pos, main_decoder_tgt
+
+        query_pos = torch.cat((main_query_pos, dn_query_embed), dim=1)
+        decoder_tgt = torch.cat((main_decoder_tgt, dn_query_embed), dim=1)
+        return query_pos, decoder_tgt
 
     def _extract_backbone_features(self, images: torch.Tensor) -> torch.Tensor:
         if self.parity_backbone is not None:
@@ -160,7 +191,11 @@ class model(_BaseTransformerModel):
 
         pmasks = F.interpolate(masks[:, 0, :, :][None], size=p.shape[-2:]).to(torch.bool)[0]
         pos = self.position_embedding(p, pmasks)
-        query_embed: torch.Tensor = self.query_embed.weight
+        learned_queries = self.query_embed.weight.unsqueeze(0).expand(images.size(0), -1, -1)
+        query_embed, decoder_tgt = self._build_decoder_query_inputs(
+            batch_size=images.size(0),
+            learned_queries=learned_queries,
+        )
         dn_meta = None
         dn_tgt_mask = None
         force_dn = bool(kwargs.get('force_dn', False))
@@ -179,9 +214,12 @@ class model(_BaseTransformerModel):
                 x_noise_scale=self.dn_lane_x_noise_scale,
                 range_noise_scale=self.dn_lane_range_noise_scale,
             )
-            learned_queries = self.query_embed.weight.unsqueeze(0).expand(images.size(0), -1, -1)
             dn_query_embed = self.dn_query_encoder(dn_queries) + self.dn_query_type_embed.view(1, 1, -1)
-            query_embed = torch.cat((learned_queries, dn_query_embed), dim=1)
+            query_embed, decoder_tgt = self._build_decoder_query_inputs(
+                batch_size=images.size(0),
+                learned_queries=learned_queries,
+                dn_query_embed=dn_query_embed,
+            )
             dn_tgt_mask = _build_dn_decoder_attention_mask(
                 num_main_queries=int(self.query_embed.weight.shape[0]),
                 num_dn_queries=int(dn_queries.shape[1]),
@@ -194,7 +232,15 @@ class model(_BaseTransformerModel):
                 'targets': dn_targets,
             }
 
-        hs, memory, weights = self.transformer(self.input_proj(p), pmasks, query_embed, pos, tgt_mask=dn_tgt_mask)
+        hs, memory, weights = self.transformer(
+            self.input_proj(p),
+            pmasks,
+            query_embed,
+            pos,
+            tgt_mask=dn_tgt_mask,
+            decoder_tgt=decoder_tgt,
+            decoder_query_pos=query_embed,
+        )
 
         query_features_per_layer = [self._apply_query_relation(layer_output) for layer_output in hs]
         feature_maps = [memory] * len(query_features_per_layer)

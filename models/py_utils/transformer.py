@@ -43,40 +43,57 @@ class Transformer(nn.Module):
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-    def forward(self, src, mask, query_embed, pos_embed, tgt_mask=None):
+    def forward(
+        self,
+        src,
+        mask,
+        query_embed,
+        pos_embed,
+        tgt_mask=None,
+        decoder_tgt=None,
+        decoder_query_pos=None,
+    ):
         # flatten NxCxHxW to HWxNxC
         bs, c, h, w = src.shape
         src = src.flatten(2).permute(2, 0, 1)
 
         pos_embed = pos_embed.flatten(2).permute(2, 0, 1)
-        if query_embed.dim() == 2:
-            query_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)
-        elif query_embed.dim() == 3:
-            if query_embed.shape[0] == bs:
-                query_embed = query_embed.permute(1, 0, 2).contiguous()
-            elif query_embed.shape[1] != bs:
-                raise ValueError(
-                    "3D query_embed must have shape [B, Q, C] or [Q, B, C], "
-                    f"got {tuple(query_embed.shape)} for batch size {bs}"
-                )
-        else:
-            raise ValueError(
-                f"query_embed must be 2D [Q, C] or 3D [B, Q, C], got {tuple(query_embed.shape)}"
-            )
+        query_embed = self._expand_decoder_tensor(query_embed, bs, name="query_embed")
 
         mask = mask.flatten(1)
 
-        # Fix: Use query_embed as initial tgt instead of zeros
-        # This allows self-attention to learn from the first epoch
-        # Original DETR uses zeros, which causes dead weight gradients in layer 0
-        tgt = query_embed.clone() * 0.1  # Small scale for stable training
+        if decoder_query_pos is None:
+            decoder_query_pos = query_embed
+        else:
+            decoder_query_pos = self._expand_decoder_tensor(decoder_query_pos, bs, name="decoder_query_pos")
+
+        if decoder_tgt is None:
+            # Legacy local parity behavior: use scaled query embeddings as initial target content.
+            tgt = query_embed.clone() * 0.1
+        else:
+            tgt = self._expand_decoder_tensor(decoder_tgt, bs, name="decoder_tgt")
 
         memory, weights = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)
 
         hs = self.decoder(tgt, memory, tgt_mask=tgt_mask, memory_key_padding_mask=mask,
-                          pos=pos_embed, query_pos=query_embed)
+                          pos=pos_embed, query_pos=decoder_query_pos)
 
         return hs.transpose(1, 2), memory.permute(1, 2, 0).view(bs, c, h, w), weights
+
+    @staticmethod
+    def _expand_decoder_tensor(tensor: Tensor, batch_size: int, name: str) -> Tensor:
+        if tensor.dim() == 2:
+            return tensor.unsqueeze(1).repeat(1, batch_size, 1)
+        if tensor.dim() == 3:
+            if tensor.shape[0] == batch_size:
+                return tensor.permute(1, 0, 2).contiguous()
+            if tensor.shape[1] == batch_size:
+                return tensor
+            raise ValueError(
+                f"3D {name} must have shape [B, Q, C] or [Q, B, C], got {tuple(tensor.shape)} "
+                f"for batch size {batch_size}"
+            )
+        raise ValueError(f"{name} must be 2D [Q, C] or 3D [B, Q, C], got {tuple(tensor.shape)}")
 
 
 class TransformerEncoder(nn.Module):
