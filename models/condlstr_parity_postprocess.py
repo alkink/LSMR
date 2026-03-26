@@ -46,20 +46,55 @@ def _decode_query_lane_points(
     return points
 
 
+def _decode_query_lane_points_from_visibility(
+    row_locations: torch.Tensor,
+    row_visibility_logits: torch.Tensor,
+    feature_width: int,
+    image_h: int,
+    image_w: int,
+    min_points: int,
+    visibility_thresh: float,
+) -> List[Tuple[float, float]]:
+    feat_h = int(row_locations.size(0))
+    feat_w = int(feature_width)
+    visibility = torch.sigmoid(row_visibility_logits)
+    keep_rows = torch.nonzero(visibility >= float(visibility_thresh), as_tuple=False).flatten()
+    if keep_rows.numel() == 0:
+        return []
+
+    y_scale = float(max(image_h - 1, 0)) / float(max(feat_h - 1, 1))
+    x_scale = float(max(image_w - 1, 0)) / float(max(feat_w - 1, 1))
+
+    points: List[Tuple[float, float]] = []
+    for row in keep_rows.tolist():
+        x_value = float(row_locations[row].item())
+        if x_value < 0.0 or x_value > float(max(feat_w - 1, 0)):
+            continue
+        points.append((x_value * x_scale, float(row) * y_scale))
+
+    if len(points) < int(min_points):
+        return []
+    return points
+
+
 def parity_outputs_to_lane_coords(
     outputs: Dict[str, torch.Tensor],
     target_sizes: torch.Tensor,
     score_thresh: float = 0.7,
     min_points: int = 2,
     max_lanes: int | None = None,
+    visibility_thresh: float = 0.5,
 ) -> List[List[List[Tuple[float, float]]]]:
-    required = {'pred_object_logits', 'pred_ranges', 'pred_dense_mask', 'pred_dense_reg'}
+    required = {'pred_object_logits', 'pred_dense_mask', 'pred_dense_reg'}
     missing = sorted(required.difference(outputs.keys()))
     if missing:
         raise KeyError(f'parity outputs missing required keys: {missing}')
 
     pred_object_logits = outputs['pred_object_logits']
-    pred_ranges = outputs['pred_ranges']
+    pred_ranges = outputs.get('pred_ranges')
+    pred_row_visibility_logits = outputs.get('pred_row_visibility_logits')
+    if pred_ranges is None and pred_row_visibility_logits is None:
+        raise KeyError('parity outputs require either pred_ranges or pred_row_visibility_logits')
     pred_dense_mask = _require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
     pred_dense_reg = _require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
 
@@ -89,14 +124,25 @@ def parity_outputs_to_lane_coords(
 
         image_lanes: List[List[Tuple[float, float]]] = []
         for query_index in keep.tolist():
-            lane_points = _decode_query_lane_points(
-                row_locations=row_locations[batch_index, query_index],
-                pred_range=pred_ranges[batch_index, query_index],
-                feature_width=int(pred_dense_mask.size(-1)),
-                image_h=image_h,
-                image_w=image_w,
-                min_points=min_points,
-            )
+            if pred_row_visibility_logits is not None:
+                lane_points = _decode_query_lane_points_from_visibility(
+                    row_locations=row_locations[batch_index, query_index],
+                    row_visibility_logits=pred_row_visibility_logits[batch_index, query_index],
+                    feature_width=int(pred_dense_mask.size(-1)),
+                    image_h=image_h,
+                    image_w=image_w,
+                    min_points=min_points,
+                    visibility_thresh=visibility_thresh,
+                )
+            else:
+                lane_points = _decode_query_lane_points(
+                    row_locations=row_locations[batch_index, query_index],
+                    pred_range=pred_ranges[batch_index, query_index],
+                    feature_width=int(pred_dense_mask.size(-1)),
+                    image_h=image_h,
+                    image_w=image_w,
+                    min_points=min_points,
+                )
             if lane_points:
                 image_lanes.append(lane_points)
         lanes_batch.append(image_lanes)

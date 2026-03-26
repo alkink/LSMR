@@ -14,6 +14,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         'pred_object_logits',
         'pred_class_logits',
         'pred_ranges',
+        'pred_row_visibility_logits',
         'pred_dense_mask',
         'pred_dense_reg',
     )
@@ -107,7 +108,8 @@ class CondLSTRParitySetCriterion(nn.Module):
 
         pred_object_logits = outputs['pred_object_logits']
         pred_class_logits = outputs['pred_class_logits']
-        pred_ranges = outputs['pred_ranges']
+        pred_ranges = outputs.get('pred_ranges')
+        pred_row_visibility_logits = outputs.get('pred_row_visibility_logits')
         pred_dense_mask = self.matcher._require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
         pred_dense_reg = self.matcher._require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
         pred_row_locations = self.matcher._dense_mask_logits_to_row_locations(pred_dense_mask)
@@ -136,7 +138,10 @@ class CondLSTRParitySetCriterion(nn.Module):
 
             target = targets[batch_index]
             batch_pred_class_logits = pred_class_logits[batch_index, src_idx]
-            batch_pred_ranges = pred_ranges[batch_index, src_idx]
+            batch_pred_ranges = pred_ranges[batch_index, src_idx] if pred_ranges is not None else None
+            batch_pred_visibility_logits = (
+                pred_row_visibility_logits[batch_index, src_idx] if pred_row_visibility_logits is not None else None
+            )
             batch_pred_row_locations = pred_row_locations[batch_index, src_idx]
             batch_pred_dense_reg = pred_dense_reg[batch_index, src_idx]
 
@@ -179,11 +184,20 @@ class CondLSTRParitySetCriterion(nn.Module):
                 (row_reg_error * target_row_reg_mask).sum(dim=(1, 2)) / valid_regression_counts
             ).sum()
 
-            total_row_range = total_row_range + F.l1_loss(
-                batch_pred_ranges,
-                target_row_ranges,
-                reduction='none',
-            ).sum(dim=1).sum()
+            if batch_pred_visibility_logits is not None:
+                total_row_range = total_row_range + F.binary_cross_entropy_with_logits(
+                    batch_pred_visibility_logits,
+                    target_row_location_mask,
+                    reduction='none',
+                ).mean(dim=1).sum()
+            else:
+                if batch_pred_ranges is None:
+                    raise ValueError('pred_ranges must be provided when pred_row_visibility_logits is absent')
+                total_row_range = total_row_range + F.l1_loss(
+                    batch_pred_ranges,
+                    target_row_ranges,
+                    reduction='none',
+                ).sum(dim=1).sum()
 
         if matched_class_logits:
             losses['loss_class'] = F.cross_entropy(
@@ -214,7 +228,8 @@ class CondLSTRParitySetCriterion(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         pred_object_logits = outputs['pred_object_logits']
         pred_class_logits = outputs['pred_class_logits']
-        pred_ranges = outputs['pred_ranges']
+        pred_ranges = outputs.get('pred_ranges')
+        pred_row_visibility_logits = outputs.get('pred_row_visibility_logits')
         pred_dense_mask = self.matcher._require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
         pred_dense_reg = self.matcher._require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
         pred_row_locations = self.matcher._dense_mask_logits_to_row_locations(pred_dense_mask)
@@ -241,7 +256,11 @@ class CondLSTRParitySetCriterion(nn.Module):
             valid_total += float(valid_count)
 
             batch_pred_class_logits = pred_class_logits[batch_index, :valid_count]
-            batch_pred_ranges = pred_ranges[batch_index, :valid_count]
+            batch_pred_ranges = pred_ranges[batch_index, :valid_count] if pred_ranges is not None else None
+            batch_pred_visibility_logits = (
+                pred_row_visibility_logits[batch_index, :valid_count]
+                if pred_row_visibility_logits is not None else None
+            )
             batch_pred_row_locations = pred_row_locations[batch_index, :valid_count]
             batch_pred_dense_reg = pred_dense_reg[batch_index, :valid_count]
 
@@ -284,11 +303,20 @@ class CondLSTRParitySetCriterion(nn.Module):
                 (row_reg_error * target_row_reg_mask).sum(dim=(1, 2)) / valid_regression_counts
             ).sum()
 
-            total_row_range = total_row_range + F.l1_loss(
-                batch_pred_ranges,
-                target_row_ranges,
-                reduction='none',
-            ).sum(dim=1).sum()
+            if batch_pred_visibility_logits is not None:
+                total_row_range = total_row_range + F.binary_cross_entropy_with_logits(
+                    batch_pred_visibility_logits,
+                    target_row_location_mask,
+                    reduction='none',
+                ).mean(dim=1).sum()
+            else:
+                if batch_pred_ranges is None:
+                    raise ValueError('pred_ranges must be provided when pred_row_visibility_logits is absent')
+                total_row_range = total_row_range + F.l1_loss(
+                    batch_pred_ranges,
+                    target_row_ranges,
+                    reduction='none',
+                ).sum(dim=1).sum()
 
         normalizer = max(valid_total, 1.0)
         losses = {

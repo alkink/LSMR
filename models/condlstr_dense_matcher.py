@@ -27,7 +27,8 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
     Supported prediction contract:
         pred_object_logits: [B, Q, 2]
         pred_class_logits:  [B, Q, C]
-        pred_ranges:        [B, Q, 2]
+        pred_ranges:        [B, Q, 2] (optional when pred_row_visibility_logits is provided)
+        pred_row_visibility_logits: [B, Q, H] (optional alternative to pred_ranges)
         pred_dense_mask:    [B, Q, H, W] or [B, Q, 1, H, W]
         pred_dense_reg:     [B, Q, H, W] or [B, Q, 1, H, W]
 
@@ -78,7 +79,8 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
     ) -> List[Tuple[torch.Tensor, torch.Tensor]] | Tuple[List[Tuple[torch.Tensor, torch.Tensor]], List[DenseMatchCostBreakdown]]:
         pred_object_logits = outputs['pred_object_logits']
         pred_class_logits = outputs['pred_class_logits']
-        pred_ranges = outputs['pred_ranges']
+        pred_ranges = outputs.get('pred_ranges')
+        pred_row_visibility_logits = outputs.get('pred_row_visibility_logits')
         pred_dense_mask = self._require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
         pred_dense_reg = self._require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
 
@@ -88,8 +90,14 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
             )
         if pred_class_logits.dim() != 3:
             raise ValueError(f"pred_class_logits must have shape [B, Q, C], got {tuple(pred_class_logits.shape)}")
-        if pred_ranges.dim() != 3 or pred_ranges.size(-1) != 2:
+        if pred_ranges is None and pred_row_visibility_logits is None:
+            raise ValueError('either pred_ranges or pred_row_visibility_logits must be provided')
+        if pred_ranges is not None and (pred_ranges.dim() != 3 or pred_ranges.size(-1) != 2):
             raise ValueError(f"pred_ranges must have shape [B, Q, 2], got {tuple(pred_ranges.shape)}")
+        if pred_row_visibility_logits is not None and pred_row_visibility_logits.dim() != 3:
+            raise ValueError(
+                f"pred_row_visibility_logits must have shape [B, Q, H], got {tuple(pred_row_visibility_logits.shape)}"
+            )
         if pred_dense_mask.dim() != 4:
             raise ValueError(f"pred_dense_mask must have shape [B, Q, H, W], got {tuple(pred_dense_mask.shape)}")
         if pred_dense_reg.dim() != 4:
@@ -99,8 +107,10 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
         expected_dense_shape = (batch_size, num_queries)
         if pred_class_logits.shape[:2] != expected_dense_shape:
             raise ValueError('pred_class_logits batch/query dimensions must match pred_object_logits')
-        if pred_ranges.shape[:2] != expected_dense_shape:
+        if pred_ranges is not None and pred_ranges.shape[:2] != expected_dense_shape:
             raise ValueError('pred_ranges batch/query dimensions must match pred_object_logits')
+        if pred_row_visibility_logits is not None and pred_row_visibility_logits.shape[:2] != expected_dense_shape:
+            raise ValueError('pred_row_visibility_logits batch/query dimensions must match pred_object_logits')
         if pred_dense_mask.shape[:2] != expected_dense_shape:
             raise ValueError('pred_dense_mask batch/query dimensions must match pred_object_logits')
         if pred_dense_reg.shape[:2] != expected_dense_shape:
@@ -139,7 +149,10 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
             costs = self.compute_cost_matrix_for_image(
                 pred_object_logits=pred_object_logits[batch_index],
                 pred_class_logits=pred_class_logits[batch_index],
-                pred_ranges=pred_ranges[batch_index],
+                pred_ranges=pred_ranges[batch_index] if pred_ranges is not None else None,
+                pred_row_visibility_logits=(
+                    pred_row_visibility_logits[batch_index] if pred_row_visibility_logits is not None else None
+                ),
                 pred_row_locations=row_locations[batch_index],
                 pred_dense_reg=pred_dense_reg[batch_index],
                 target=target,
@@ -162,7 +175,8 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
         self,
         pred_object_logits: torch.Tensor,
         pred_class_logits: torch.Tensor,
-        pred_ranges: torch.Tensor,
+        pred_ranges: torch.Tensor | None,
+        pred_row_visibility_logits: torch.Tensor | None,
         pred_row_locations: torch.Tensor,
         pred_dense_reg: torch.Tensor,
         target: Dict[str, torch.Tensor],
@@ -213,7 +227,19 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
         cost_row_reg = weighted_regression_errors.sum(dim=(2, 3)) / valid_regression_counts
 
         target_row_ranges = target['gt_row_rng']
-        cost_row_range = torch.abs(pred_ranges.unsqueeze(1) - target_row_ranges.unsqueeze(0)).sum(dim=2)
+        if pred_row_visibility_logits is not None:
+            target_row_visibility = target['gt_row_loc_mask'].float()
+            pred_vis = pred_row_visibility_logits.unsqueeze(1).expand(-1, target_row_visibility.size(0), -1)
+            target_vis = target_row_visibility.unsqueeze(0).expand(pred_vis.size(0), -1, -1)
+            cost_row_range = F.binary_cross_entropy_with_logits(
+                pred_vis,
+                target_vis,
+                reduction='none',
+            ).mean(dim=2)
+        else:
+            if pred_ranges is None:
+                raise ValueError('pred_ranges must be provided when pred_row_visibility_logits is absent')
+            cost_row_range = torch.abs(pred_ranges.unsqueeze(1) - target_row_ranges.unsqueeze(0)).sum(dim=2)
 
         total_cost = (
             self.object_weight * cost_object

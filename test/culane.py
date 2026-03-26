@@ -73,8 +73,9 @@ class PostProcess(nn.Module):
             results = torch.cat([labels.unsqueeze(-1).float(), out_bbox], dim=-1)
             return results
 
-        dense_keys = ['pred_object_logits', 'pred_ranges', 'pred_dense_mask', 'pred_dense_reg']
-        if all(k in outputs for k in dense_keys):
+        dense_keys = ['pred_object_logits', 'pred_dense_mask', 'pred_dense_reg']
+        has_lane_span = ('pred_ranges' in outputs) or ('pred_row_visibility_logits' in outputs)
+        if all(k in outputs for k in dense_keys) and has_lane_span:
             if outputs.get('postprocess_mode') == 'condlstr_parity':
                 if parity_outputs_to_lane_coords is None:
                     raise ImportError('parity_outputs_to_lane_coords import failed; check models.condlstr_parity_postprocess')
@@ -85,11 +86,19 @@ class PostProcess(nn.Module):
                         score_thresh = float(env_score_thresh)
                     else:
                         score_thresh = float(system_configs.full.get('condlstr_score_thresh', 0.7))
+                visibility_thresh = outputs.get('visibility_thresh')
+                if visibility_thresh is None:
+                    env_visibility_thresh = os.environ.get('LSTR_PARITY_VISIBILITY_THRESH')
+                    if env_visibility_thresh is not None:
+                        visibility_thresh = float(env_visibility_thresh)
+                    else:
+                        visibility_thresh = float(system_configs.full.get('condlstr_visibility_thresh', 0.5))
                 return parity_outputs_to_lane_coords(
                     outputs=outputs,
                     target_sizes=target_sizes,
                     score_thresh=float(score_thresh),
                     min_points=2,
+                    visibility_thresh=float(visibility_thresh),
                 )
 
             if dense_outputs_to_lane_coords is None:

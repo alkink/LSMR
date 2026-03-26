@@ -38,11 +38,19 @@ class QueryBranchHead(nn.Module):
         mask_param_dim: int,
         reg_param_dim: int,
         mask_bias_channels: int,
+        predict_ranges: bool = True,
+        visibility_dim: int = 0,
     ):
         super().__init__()
         self.object_logits = self._make_branch(query_dim, hidden_dim, 2, init_logits_bias=True)
         self.class_logits = self._make_branch(query_dim, hidden_dim, num_classes)
-        self.ranges = self._make_branch(query_dim, hidden_dim, 2)
+        self.predict_ranges = bool(predict_ranges)
+        self.visibility_dim = int(visibility_dim)
+        self.ranges = self._make_branch(query_dim, hidden_dim, 2) if self.predict_ranges else None
+        self.visibility_logits = (
+            self._make_branch(query_dim, hidden_dim, self.visibility_dim)
+            if self.visibility_dim > 0 else None
+        )
         self.mask_params = self._make_branch(
             query_dim,
             hidden_dim,
@@ -79,13 +87,17 @@ class QueryBranchHead(nn.Module):
         return bias_init
 
     def forward(self, query_features: torch.Tensor) -> Dict[str, torch.Tensor]:
-        return {
+        outputs = {
             'pred_object_logits': self.object_logits(query_features),
             'pred_class_logits': self.class_logits(query_features),
-            'pred_ranges': self.ranges(query_features).sigmoid(),
             'pred_mask_params': self.mask_params(query_features),
             'pred_reg_params': self.reg_params(query_features),
         }
+        if self.ranges is not None:
+            outputs['pred_ranges'] = self.ranges(query_features).sigmoid()
+        if self.visibility_logits is not None:
+            outputs['pred_row_visibility_logits'] = self.visibility_logits(query_features)
+        return outputs
 
 
 class DynamicSpatialBranch(nn.Module):
@@ -151,6 +163,8 @@ class CondLSTRParityHead(nn.Module):
         mask_out_channels: int = 1,
         reg_out_channels: int = 1,
         use_coords: bool = False,
+        predict_ranges: bool = True,
+        visibility_dim: int = 0,
     ):
         super().__init__()
         self.mask_out_channels = mask_out_channels
@@ -172,6 +186,8 @@ class CondLSTRParityHead(nn.Module):
             mask_param_dim=self.mask_branch.param_dim,
             reg_param_dim=self.reg_branch.param_dim,
             mask_bias_channels=mask_out_channels,
+            predict_ranges=predict_ranges,
+            visibility_dim=visibility_dim,
         )
 
     def forward(

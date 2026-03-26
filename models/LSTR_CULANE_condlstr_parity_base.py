@@ -52,6 +52,12 @@ class model(_BaseTransformerModel):
         dense_num_classes = max(int(system_configs.full.get('dense_num_classes', 1)), 1)
         branch_hidden_dim = int(system_configs.full.get('dense_branch_hidden_dim', 256))
         use_coords = bool(system_configs.full.get('dense_use_coords', False))
+        self.dense_range_mode = str(system_configs.full.get('dense_range_mode', 'range')).lower()
+        self.dense_visibility_dim = int(system_configs.full.get('dense_visibility_dim', 0))
+        if self.dense_range_mode not in {'range', 'visibility'}:
+            raise ValueError(f"Unsupported dense_range_mode={self.dense_range_mode!r}")
+        if self.dense_range_mode == 'visibility' and self.dense_visibility_dim <= 0:
+            raise ValueError('dense_visibility_dim must be positive when dense_range_mode=visibility')
         self.mask_downscale = int(system_configs.full.get('condlstr_mask_downscale', 1))
         self.dn_lane_num_queries = int(system_configs.full.get('dn_lane_num_queries', 0))
         self.dn_lane_x_noise_scale = float(system_configs.full.get('dn_lane_x_noise_scale', 0.05))
@@ -75,6 +81,8 @@ class model(_BaseTransformerModel):
             mask_out_channels=1,
             reg_out_channels=1,
             use_coords=use_coords,
+            predict_ranges=self.dense_range_mode != 'visibility',
+            visibility_dim=self.dense_visibility_dim if self.dense_range_mode == 'visibility' else 0,
         )
         if self.dn_lane_enabled:
             self.dn_query_encoder = nn.Sequential(
@@ -90,7 +98,8 @@ class model(_BaseTransformerModel):
         print(
             "[LSTR_CULANE_condlstr_parity_base] "
             f"backbone={self.parity_backbone_mode} "
-            f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, use_coords={use_coords})"
+            f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, "
+            f"use_coords={use_coords}, range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim})"
         )
         if self.dn_lane_enabled:
             print(
@@ -177,6 +186,8 @@ class model(_BaseTransformerModel):
         final_output = dict(formatted_outputs[-1])
         final_output['aux_outputs'] = formatted_outputs[:-1]
         final_output['postprocess_mode'] = 'condlstr_parity'
+        if self.dense_range_mode == 'visibility':
+            final_output['visibility_thresh'] = float(system_configs.full.get('condlstr_visibility_thresh', 0.5))
         if dn_meta is not None:
             final_output['dn_meta'] = dn_meta
         return final_output, weights
