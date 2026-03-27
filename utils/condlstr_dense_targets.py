@@ -123,6 +123,7 @@ def convert_culane_points_to_rowwise_targets(
     row_regression_masks = []
     label_objects = []
     label_classes = []
+    lane_bottom_xs = []
 
     for lane_index, lane in enumerate(lanes):
         scaled_lane = _scale_lane_points(lane, image_size=image_size, target_size=target_size)
@@ -165,6 +166,7 @@ def convert_culane_points_to_rowwise_targets(
         row_location_masks.append(row_loc_mask)
         row_regression_masks.append(row_reg_mask)
         label_objects.append(torch.tensor(0, dtype=torch.int64, device=device))
+        lane_bottom_xs.append(lane_xs[-1])
         label_classes.append(
             torch.tensor(
                 0 if lane_attrs is None else int(lane_attrs[lane_index]),
@@ -182,14 +184,26 @@ def convert_culane_points_to_rowwise_targets(
             'gt_row_reg_mask': torch.zeros((0, target_h, target_w), dtype=torch.float32, device=device),
             'gt_label_obj': torch.zeros((0,), dtype=torch.int64, device=device),
             'gt_label_cls': torch.zeros((0,), dtype=torch.int64, device=device),
+            'gt_lane_order': torch.zeros((0,), dtype=torch.int64, device=device),
+            'gt_lane_order_norm': torch.zeros((0,), dtype=torch.float32, device=device),
         }
 
+    lane_bottom_xs_tensor = torch.stack(lane_bottom_xs, dim=0)
+    sort_order = torch.argsort(lane_bottom_xs_tensor, dim=0)
+    num_lanes = int(sort_order.numel())
+    if num_lanes > 1:
+        lane_order_norm = torch.linspace(0.0, 1.0, steps=num_lanes, dtype=torch.float32, device=device)
+    else:
+        lane_order_norm = torch.zeros((num_lanes,), dtype=torch.float32, device=device)
+
     return {
-        'gt_row_rng': torch.stack(row_ranges, dim=0),
-        'gt_row_loc': torch.stack(row_locations, dim=0),
-        'gt_row_reg': torch.stack(row_regressions, dim=0),
-        'gt_row_loc_mask': torch.stack(row_location_masks, dim=0),
-        'gt_row_reg_mask': torch.stack(row_regression_masks, dim=0),
-        'gt_label_obj': torch.stack(label_objects, dim=0),
-        'gt_label_cls': torch.stack(label_classes, dim=0),
+        'gt_row_rng': torch.stack(row_ranges, dim=0)[sort_order],
+        'gt_row_loc': torch.stack(row_locations, dim=0)[sort_order],
+        'gt_row_reg': torch.stack(row_regressions, dim=0)[sort_order],
+        'gt_row_loc_mask': torch.stack(row_location_masks, dim=0)[sort_order],
+        'gt_row_reg_mask': torch.stack(row_regression_masks, dim=0)[sort_order],
+        'gt_label_obj': torch.stack(label_objects, dim=0)[sort_order],
+        'gt_label_cls': torch.stack(label_classes, dim=0)[sort_order],
+        'gt_lane_order': torch.arange(num_lanes, dtype=torch.int64, device=device),
+        'gt_lane_order_norm': lane_order_norm,
     }

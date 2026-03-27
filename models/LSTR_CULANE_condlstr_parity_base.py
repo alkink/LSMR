@@ -321,6 +321,7 @@ class loss(nn.Module):
             location_iou_weight=float(system_configs.full.get('dense_match_location_iou_weight', 2.0)),
             regression_weight=float(system_configs.full.get('dense_match_regression_weight', 1.0)),
             range_weight=float(system_configs.full.get('dense_match_range_weight', 20.0)),
+            order_weight=float(system_configs.full.get('dense_match_order_weight', 0.0)),
         )
         self.criterion = CondLSTRParitySetCriterion(
             matcher=matcher,

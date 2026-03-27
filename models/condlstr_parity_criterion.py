@@ -391,6 +391,7 @@ class CondLSTRParitySetCriterion(nn.Module):
                         'cost_row_iou': float(breakdown.cost_row_iou[query_index, target_index].item()),
                         'cost_row_reg': float(breakdown.cost_row_reg[query_index, target_index].item()),
                         'cost_row_range': float(breakdown.cost_row_range[query_index, target_index].item()),
+                        'cost_order': float(breakdown.cost_order[query_index, target_index].item()),
                     }
                 )
                 target_competition.append(

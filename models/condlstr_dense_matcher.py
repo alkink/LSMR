@@ -17,6 +17,7 @@ class DenseMatchCostBreakdown:
     cost_row_iou: torch.Tensor
     cost_row_reg: torch.Tensor
     cost_row_range: torch.Tensor
+    cost_order: torch.Tensor
     total_cost: torch.Tensor
 
 
@@ -58,6 +59,7 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
         location_iou_weight: float = 2.0,
         regression_weight: float = 1.0,
         range_weight: float = 1.0,
+        order_weight: float = 0.0,
         ignore_class_index: int = 255,
     ):
         super().__init__()
@@ -67,6 +69,7 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
         self.location_iou_weight = float(location_iou_weight)
         self.regression_weight = float(regression_weight)
         self.range_weight = float(range_weight)
+        self.order_weight = float(order_weight)
         self.line_width = float(line_width)
         self.ignore_class_index = int(ignore_class_index)
 
@@ -141,6 +144,7 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
                             cost_row_iou=empty_cost,
                             cost_row_reg=empty_cost,
                             cost_row_range=empty_cost,
+                            cost_order=empty_cost,
                             total_cost=empty_cost,
                         )
                     )
@@ -227,6 +231,7 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
         cost_row_reg = weighted_regression_errors.sum(dim=(2, 3)) / valid_regression_counts
 
         target_row_ranges = target['gt_row_rng']
+        target_lane_order_norm = target.get('gt_lane_order_norm')
         if pred_row_visibility_logits is not None:
             target_row_visibility = target['gt_row_loc_mask'].float()
             pred_vis = pred_row_visibility_logits.unsqueeze(1).expand(-1, target_row_visibility.size(0), -1)
@@ -241,6 +246,18 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
                 raise ValueError('pred_ranges must be provided when pred_row_visibility_logits is absent')
             cost_row_range = torch.abs(pred_ranges.unsqueeze(1) - target_row_ranges.unsqueeze(0)).sum(dim=2)
 
+        if target_lane_order_norm is None:
+            if target_row_ranges.size(0) > 1:
+                target_lane_order_norm = torch.linspace(
+                    0.0, 1.0, steps=target_row_ranges.size(0), dtype=pred_object_logits.dtype, device=pred_object_logits.device
+                )
+            else:
+                target_lane_order_norm = pred_object_logits.new_zeros((target_row_ranges.size(0),))
+        query_order_norm = torch.linspace(
+            0.0, 1.0, steps=pred_object_logits.size(0), dtype=pred_object_logits.dtype, device=pred_object_logits.device
+        )
+        cost_order = torch.abs(query_order_norm.unsqueeze(1) - target_lane_order_norm.unsqueeze(0))
+
         total_cost = (
             self.object_weight * cost_object
             + self.class_weight * cost_class
@@ -248,6 +265,7 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
             + (self.location_weight * self.location_iou_weight) * cost_row_iou
             + self.regression_weight * cost_row_reg
             + self.range_weight * cost_row_range
+            + self.order_weight * cost_order
         )
 
         return DenseMatchCostBreakdown(
@@ -257,6 +275,7 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
             cost_row_iou=cost_row_iou,
             cost_row_reg=cost_row_reg,
             cost_row_range=cost_row_range,
+            cost_order=cost_order,
             total_cost=total_cost,
         )
 
@@ -291,6 +310,8 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
             'gt_row_reg_mask',
             'gt_label_obj',
             'gt_label_cls',
+            'gt_lane_order',
+            'gt_lane_order_norm',
         }
         missing_keys = sorted(required_keys.difference(target.keys()))
         if missing_keys:
@@ -306,6 +327,8 @@ class CondLSTRDenseHungarianMatcher(nn.Module):
             'gt_row_reg_mask': (num_targets, height, width),
             'gt_label_obj': (num_targets,),
             'gt_label_cls': (num_targets,),
+            'gt_lane_order': (num_targets,),
+            'gt_lane_order_norm': (num_targets,),
         }
         for key, expected_shape in expected_shapes.items():
             if tuple(target[key].shape) != expected_shape:
