@@ -75,7 +75,7 @@
         "dense_match_regression_weight": 1.0,
         "dense_match_range_weight": 20.0,
         "condlstr_mask_downscale": 1,
-        "condlstr_score_thresh": 0.7,
+        "condlstr_score_thresh": 0.4,
         "parity_backbone": "stdc_res34",
         "parity_backbone_pretrained": false
     },
