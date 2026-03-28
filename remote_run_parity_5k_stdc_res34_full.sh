@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="/workspace/LSMR"
 BASE_CFG="LSTR_CULANE_5k_condlstr_parity_stdc_res34"
 SEED2="${1:-901}"
-ITER="${2:-12500}"
+ITER="${2:-30000}"
 SUFFIX="${3:-thr04}"
 SEED2_CFG="${BASE_CFG}_seed${SEED2}"
 

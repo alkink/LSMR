@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="/workspace/LSMR"
 CFG="LSTR_CULANE_5k_condlstr_parity_stdc_dn"
-ITER="${1:-12500}"
+ITER="${1:-30000}"
 SUFFIX="${2:-thr04}"
 TEST_LOG="test_${CFG}_${ITER}_${SUFFIX}.log"
 EVAL_LOG="eval_${CFG}_${ITER}_${SUFFIX}.log"
