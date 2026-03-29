@@ -13,6 +13,7 @@ from config import system_configs
 from models.LSTR_CULANE import model as _BaseTransformerModel
 from models.condlstr_dense_matcher import CondLSTRDenseHungarianMatcher
 from models.condlstr_dn_lane import build_dn_lane_queries
+from models.condlstr_geo_anchor import FixedLaneAnchorBank, LaneAnchorEncoder
 from models.condlstr_parity_criterion import CondLSTRParitySetCriterion
 from models.condlstr_parity_head import CondLSTRParityHead
 from models.condlstr_query_relation import QueryRelationBlock
@@ -53,6 +54,11 @@ class model(_BaseTransformerModel):
         dense_num_classes = max(int(system_configs.full.get('dense_num_classes', 1)), 1)
         branch_hidden_dim = int(system_configs.full.get('dense_branch_hidden_dim', 256))
         use_coords = bool(system_configs.full.get('dense_use_coords', False))
+        self.dense_query_mode = str(system_configs.full.get('dense_query_mode', 'learned')).lower()
+        self.dense_geo_anchor_mode = str(system_configs.full.get('dense_geo_anchor_mode', 'bottom_dx_rowspan')).lower()
+        self.dense_geo_anchor_scale = float(system_configs.full.get('dense_geo_anchor_scale', 1.0))
+        self.dense_geo_anchor_query_scale = float(system_configs.full.get('dense_geo_anchor_query_scale', 1.0))
+        self.dense_geo_anchor_tgt_scale = float(system_configs.full.get('dense_geo_anchor_tgt_scale', 1.0))
         self.dense_decoder_init_mode = str(
             system_configs.full.get('dense_decoder_init_mode', 'legacy_query_embed')
         ).lower()
@@ -63,6 +69,8 @@ class model(_BaseTransformerModel):
         self.dense_relation_dropout = float(system_configs.full.get('dense_relation_dropout', 0.1))
         self.dense_range_mode = str(system_configs.full.get('dense_range_mode', 'range')).lower()
         self.dense_visibility_dim = int(system_configs.full.get('dense_visibility_dim', 0))
+        if self.dense_query_mode not in {'learned', 'geo_anchor'}:
+            raise ValueError(f"Unsupported dense_query_mode={self.dense_query_mode!r}")
         if self.dense_decoder_init_mode not in {'legacy_query_embed', 'learned_target_embed'}:
             raise ValueError(f"Unsupported dense_decoder_init_mode={self.dense_decoder_init_mode!r}")
         if self.dense_relation_mode not in {'none', 'self_attn'}:
@@ -90,6 +98,16 @@ class model(_BaseTransformerModel):
             self.decoder_target_embed = nn.Embedding(int(system_configs.num_queries), int(system_configs.attn_dim))
         else:
             self.decoder_target_embed = None
+
+        if self.dense_query_mode == 'geo_anchor':
+            self.geo_anchor_bank = FixedLaneAnchorBank(
+                num_queries=int(system_configs.num_queries),
+                mode=self.dense_geo_anchor_mode,
+            )
+            self.geo_anchor_encoder = LaneAnchorEncoder(anchor_dim=4, hidden_dim=int(system_configs.attn_dim))
+        else:
+            self.geo_anchor_bank = None
+            self.geo_anchor_encoder = None
 
         if self.dense_relation_mode == 'self_attn' and self.dense_relation_layers > 0:
             self.query_relation = QueryRelationBlock(
@@ -128,7 +146,8 @@ class model(_BaseTransformerModel):
             "[LSTR_CULANE_condlstr_parity_base] "
             f"backbone={self.parity_backbone_mode} "
             f"head -> CondLSTRParityHead(num_classes={dense_num_classes}, hidden={branch_hidden_dim}, "
-            f"use_coords={use_coords}, decoder_init_mode={self.dense_decoder_init_mode}, "
+            f"use_coords={use_coords}, query_mode={self.dense_query_mode}, "
+            f"decoder_init_mode={self.dense_decoder_init_mode}, "
             f"range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim}, "
             f"relation_mode={self.dense_relation_mode}, relation_layers={self.dense_relation_layers})"
         )
@@ -157,12 +176,24 @@ class model(_BaseTransformerModel):
             main_query_pos = learned_queries
             main_decoder_tgt = learned_queries * 0.1
 
+        if self.dense_query_mode == 'geo_anchor':
+            geo_anchor_embed = self._build_geo_anchor_embeddings(batch_size=batch_size)
+            main_query_pos = main_query_pos + (self.dense_geo_anchor_query_scale * geo_anchor_embed)
+            main_decoder_tgt = main_decoder_tgt + (self.dense_geo_anchor_tgt_scale * geo_anchor_embed)
+
         if dn_query_embed is None:
             return main_query_pos, main_decoder_tgt
 
         query_pos = torch.cat((main_query_pos, dn_query_embed), dim=1)
         decoder_tgt = torch.cat((main_decoder_tgt, dn_query_embed), dim=1)
         return query_pos, decoder_tgt
+
+    def _build_geo_anchor_embeddings(self, batch_size: int) -> torch.Tensor:
+        if self.geo_anchor_bank is None or self.geo_anchor_encoder is None:
+            raise RuntimeError('geo anchor embeddings requested but geo anchor modules are not initialized')
+        anchor_bank = self.geo_anchor_bank()
+        anchor_embed = self.geo_anchor_encoder(anchor_bank) * self.dense_geo_anchor_scale
+        return anchor_embed.unsqueeze(0).expand(int(batch_size), -1, -1)
 
     def _extract_backbone_features(self, images: torch.Tensor) -> torch.Tensor:
         if self.parity_backbone is not None:
