@@ -94,11 +94,37 @@ def _normalize_image_key(path: str) -> str:
     return path
 
 
-def _load_culane_scenario_map() -> Dict[str, str]:
+def _load_culane_scenario_map(dataset_root: str | os.PathLike[str] | None = None) -> Tuple[Dict[str, str], str | None]:
     scenario_map: Dict[str, str] = {}
-    split_dir = Path(system_configs.data_dir) / "CULane" / "list" / "test_split"
-    if not split_dir.exists():
-        return scenario_map
+
+    candidate_dirs: List[Path] = []
+    if dataset_root:
+        candidate_dirs.append(Path(dataset_root) / "list" / "test_split")
+
+    data_dir = Path(system_configs.data_dir)
+    candidate_dirs.extend(
+        [
+            data_dir / "CULane" / "list" / "test_split",
+            data_dir / "list" / "test_split",
+            Path.cwd() / "data" / "CULane" / "list" / "test_split",
+            Path.cwd().parent / "CULane" / "list" / "test_split",
+            Path("/home/alki/projects/CULane/list/test_split"),
+        ]
+    )
+
+    split_dir = None
+    seen = set()
+    for candidate in candidate_dirs:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            split_dir = candidate
+            break
+
+    if split_dir is None:
+        return scenario_map, None
 
     for path in sorted(split_dir.glob("test*.txt")):
         name = path.stem
@@ -108,7 +134,7 @@ def _load_culane_scenario_map() -> Dict[str, str]:
                 key = _normalize_image_key(line.strip())
                 if key:
                     scenario_map[key] = scenario
-    return scenario_map
+    return scenario_map, str(split_dir)
 
 
 def _iou_bucket(best_iou: float) -> str:
@@ -125,6 +151,7 @@ def _iou_bucket(best_iou: float) -> str:
 def _oracle_match_flags(
     iou_matrix: np.ndarray,
     eligible_query_mask: np.ndarray,
+    query_slot_ids: Sequence[int],
     iou_thresh: float,
 ) -> Tuple[List[bool], List[int | None]]:
     num_gt = int(iou_matrix.shape[0])
@@ -145,7 +172,7 @@ def _oracle_match_flags(
     for gt_idx, sub_query_idx in zip(row_ind.tolist(), col_ind.tolist()):
         if candidate[gt_idx, sub_query_idx] > 0.0:
             matched[gt_idx] = True
-            matched_query_slots[gt_idx] = int(eligible_indices[sub_query_idx])
+            matched_query_slots[gt_idx] = int(query_slot_ids[int(eligible_indices[sub_query_idx])])
     return matched, matched_query_slots
 
 
@@ -220,7 +247,7 @@ def main():
     dataset_name = system_configs.dataset
     split = _resolve_split(args.split)
     db = datasets[dataset_name](configs["db"], split)
-    scenario_map = _load_culane_scenario_map()
+    scenario_map, scenario_source = _load_culane_scenario_map(getattr(db, "root", None))
 
     nnet = NetworkFactory()
     nnet.load_params(int(args.testiter))
@@ -265,6 +292,10 @@ def main():
         f"[error-decomp] cfg={args.cfg_file} split={split} images={total_images} "
         f"iter={args.testiter} score_thresh={score_thresh:.3f} iou_thresh={args.iou_thresh:.3f}"
     )
+    if scenario_source is None:
+        print("[error-decomp] scenario_map=missing source=<none>")
+    else:
+        print(f"[error-decomp] scenario_map={len(scenario_map)} source={scenario_source}")
 
     for image_counter, db_ind in enumerate(db_indices, start=1):
         item = db.detections(int(db_ind))
@@ -291,6 +322,7 @@ def main():
         gt_masks = [_lane_to_mask(lane, (image_h, image_w), args.line_width) for lane in gt_lanes]
         pred_masks = [_lane_to_mask(query_info["points"], (image_h, image_w), args.line_width) for query_info in decoded_queries]
         pred_scores = np.asarray([float(query_info["score"]) for query_info in decoded_queries], dtype=np.float32)
+        query_slot_ids = [int(query_info["query_index"]) for query_info in decoded_queries]
         iou_matrix = np.zeros((len(gt_lanes), len(decoded_queries)), dtype=np.float32)
         for gt_index, gt_mask in enumerate(gt_masks):
             for query_index, pred_mask in enumerate(pred_masks):
@@ -299,11 +331,13 @@ def main():
         pre_match_flags, pre_match_slots = _oracle_match_flags(
             iou_matrix=iou_matrix,
             eligible_query_mask=np.ones((len(decoded_queries),), dtype=bool),
+            query_slot_ids=query_slot_ids,
             iou_thresh=float(args.iou_thresh),
         )
         post_match_flags, post_match_slots = _oracle_match_flags(
             iou_matrix=iou_matrix,
             eligible_query_mask=(pred_scores >= float(score_thresh)) if pred_scores.size else np.zeros((0,), dtype=bool),
+            query_slot_ids=query_slot_ids,
             iou_thresh=float(args.iou_thresh),
         )
 
@@ -421,6 +455,7 @@ def main():
         "iou_thresh": float(args.iou_thresh),
         "line_width": int(args.line_width),
         "num_images": int(len(per_image_summary)),
+        "scenario_source": scenario_source,
         "global_summary": global_summary,
         "scenario_summary": scenario_summary,
         "slot_stats": {
