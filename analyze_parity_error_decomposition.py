@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import random
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -208,6 +209,7 @@ def main():
     parser.add_argument("--iou-thresh", type=float, default=0.5, help="Lane IoU threshold")
     parser.add_argument("--line-width", type=int, default=30, help="Rasterization width in pixels")
     parser.add_argument("--limit", type=int, default=None, help="Optional number of images to analyze")
+    parser.add_argument("--log-every", type=int, default=100, help="Print progress every N images")
     parser.add_argument("--out", type=Path, required=True, help="Summary JSON output path")
     parser.add_argument("--details-jsonl", type=Path, default=None, help="Optional per-GT-lane JSONL output path")
     args = parser.parse_args()
@@ -233,6 +235,7 @@ def main():
     db_indices = db.db_inds
     if args.limit is not None:
         db_indices = db_indices[: int(args.limit)]
+    total_images = int(len(db_indices))
 
     per_lane_records: List[Dict[str, object]] = []
     per_image_summary: List[Dict[str, object]] = []
@@ -249,7 +252,21 @@ def main():
         if args.details_jsonl.exists():
             args.details_jsonl.unlink()
 
-    for db_ind in db_indices:
+    start_time = time.time()
+
+    def _format_seconds(seconds: float) -> str:
+        seconds = max(float(seconds), 0.0)
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+    print(
+        f"[error-decomp] cfg={args.cfg_file} split={split} images={total_images} "
+        f"iter={args.testiter} score_thresh={score_thresh:.3f} iou_thresh={args.iou_thresh:.3f}"
+    )
+
+    for image_counter, db_ind in enumerate(db_indices, start=1):
         item = db.detections(int(db_ind))
         image = cv2.imread(item["path"])
         if image is None:
@@ -364,6 +381,19 @@ def main():
             with args.details_jsonl.open("a", encoding="utf-8") as handle:
                 for record in image_lane_records:
                     handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+        if int(args.log_every) > 0 and (
+            image_counter % int(args.log_every) == 0 or image_counter == total_images
+        ):
+            elapsed = time.time() - start_time
+            per_image = elapsed / float(image_counter)
+            remaining = per_image * float(max(total_images - image_counter, 0))
+            print(
+                f"[error-decomp] {image_counter}/{total_images} "
+                f"elapsed={_format_seconds(elapsed)} "
+                f"eta={_format_seconds(remaining)} "
+                f"sec_per_image={per_image:.3f}"
+            )
 
     global_summary = _summarize_lane_records(per_lane_records)
     scenario_summary = {}
