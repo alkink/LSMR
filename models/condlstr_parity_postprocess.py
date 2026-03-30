@@ -106,24 +106,64 @@ def parity_outputs_to_lane_coords(
     row_offsets = pred_dense_reg.gather(dim=-1, index=rounded_centers.unsqueeze(-1)).squeeze(-1)
     row_locations = rounded_centers.float() + row_offsets
 
+    query_batch = decode_parity_query_lanes(
+        outputs=outputs,
+        target_sizes=target_sizes,
+        score_thresh=score_thresh,
+        min_points=min_points,
+        max_lanes=max_lanes,
+        visibility_thresh=visibility_thresh,
+    )
     lanes_batch: List[List[List[Tuple[float, float]]]] = []
+    for image_queries in query_batch:
+        lanes_batch.append([query_info['points'] for query_info in image_queries])
+    return lanes_batch
+
+
+def decode_parity_query_lanes(
+    outputs: Dict[str, torch.Tensor],
+    target_sizes: torch.Tensor,
+    score_thresh: float = 0.7,
+    min_points: int = 2,
+    max_lanes: int | None = None,
+    visibility_thresh: float = 0.5,
+) -> List[List[Dict[str, object]]]:
+    required = {'pred_object_logits', 'pred_dense_mask', 'pred_dense_reg'}
+    missing = sorted(required.difference(outputs.keys()))
+    if missing:
+        raise KeyError(f'parity outputs missing required keys: {missing}')
+
+    pred_object_logits = outputs['pred_object_logits']
+    pred_ranges = outputs.get('pred_ranges')
+    pred_row_visibility_logits = outputs.get('pred_row_visibility_logits')
+    if pred_ranges is None and pred_row_visibility_logits is None:
+        raise KeyError('parity outputs require either pred_ranges or pred_row_visibility_logits')
+    pred_dense_mask = _require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
+    pred_dense_reg = _require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
+
+    object_probs = F.softmax(pred_object_logits, dim=-1)[..., 0]
+    row_probabilities = pred_dense_mask.softmax(dim=-1)
+    column_positions = torch.arange(pred_dense_mask.size(-1), dtype=pred_dense_mask.dtype, device=pred_dense_mask.device)
+    row_centers = (row_probabilities * column_positions.view(1, 1, 1, -1)).sum(dim=-1)
+    rounded_centers = row_centers.round().long().clamp(min=0, max=pred_dense_mask.size(-1) - 1)
+    row_offsets = pred_dense_reg.gather(dim=-1, index=rounded_centers.unsqueeze(-1)).squeeze(-1)
+    row_locations = rounded_centers.float() + row_offsets
+
+    queries_batch: List[List[Dict[str, object]]] = []
     for batch_index in range(pred_object_logits.size(0)):
         image_h = int(target_sizes[batch_index, 0].item())
         image_w = int(target_sizes[batch_index, 1].item())
 
-        keep = torch.nonzero(object_probs[batch_index] >= float(score_thresh), as_tuple=False).flatten()
-        if keep.numel() == 0:
-            lanes_batch.append([])
-            continue
-
+        keep = torch.arange(pred_object_logits.size(1), device=pred_object_logits.device, dtype=torch.long)
         keep_scores = object_probs[batch_index, keep]
         order = torch.argsort(keep_scores, descending=True)
         keep = keep[order]
-        if max_lanes is not None:
-            keep = keep[: max(0, int(max_lanes))]
 
-        image_lanes: List[List[Tuple[float, float]]] = []
+        image_queries: List[Dict[str, object]] = []
         for query_index in keep.tolist():
+            score = float(object_probs[batch_index, query_index].item())
+            if score < float(score_thresh):
+                continue
             if pred_row_visibility_logits is not None:
                 lane_points = _decode_query_lane_points_from_visibility(
                     row_locations=row_locations[batch_index, query_index],
@@ -144,7 +184,31 @@ def parity_outputs_to_lane_coords(
                     min_points=min_points,
                 )
             if lane_points:
-                image_lanes.append(lane_points)
-        lanes_batch.append(image_lanes)
+                image_queries.append(
+                    {
+                        'query_index': int(query_index),
+                        'score': score,
+                        'points': lane_points,
+                    }
+                )
+        if max_lanes is not None:
+            image_queries = image_queries[: max(0, int(max_lanes))]
+        queries_batch.append(image_queries)
 
-    return lanes_batch
+    return queries_batch
+
+
+def parity_outputs_to_lane_coords_all_queries(
+    outputs: Dict[str, torch.Tensor],
+    target_sizes: torch.Tensor,
+    min_points: int = 2,
+    visibility_thresh: float = 0.5,
+) -> List[List[Dict[str, object]]]:
+    return decode_parity_query_lanes(
+        outputs=outputs,
+        target_sizes=target_sizes,
+        score_thresh=0.0,
+        min_points=min_points,
+        max_lanes=None,
+        visibility_thresh=visibility_thresh,
+    )
