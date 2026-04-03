@@ -358,9 +358,16 @@ class loss(nn.Module):
             matcher=matcher,
             line_width=self.line_width,
             object_eos_coef=float(system_configs.full.get('dense_object_eos_coef', 0.4)),
+            object_target_mode=str(system_configs.full.get('dense_object_target_mode', 'binary')),
+            object_quality_power=float(system_configs.full.get('dense_object_quality_power', 1.0)),
         )
 
         print(f"[LSTR_CULANE_condlstr_parity_base] weight_dict: {self.weight_dict}")
+        print(
+            "[LSTR_CULANE_condlstr_parity_base] "
+            f"object_target_mode={self.criterion.object_target_mode} "
+            f"object_quality_power={self.criterion.object_quality_power}"
+        )
 
     def _append_match_diagnostics(self, iteration: int, diagnostics: List[Dict[str, object]]) -> None:
         if not diagnostics:

@@ -25,11 +25,19 @@ class CondLSTRParitySetCriterion(nn.Module):
         line_width: float,
         object_eos_coef: float = 0.4,
         ignore_class_index: int = 255,
+        object_target_mode: str = 'binary',
+        object_quality_power: float = 1.0,
     ):
         super().__init__()
         self.matcher = matcher
         self.line_width = float(line_width)
         self.ignore_class_index = int(ignore_class_index)
+        self.object_target_mode = str(object_target_mode).lower()
+        self.object_quality_power = float(object_quality_power)
+        if self.object_target_mode not in {'binary', 'row_iou'}:
+            raise ValueError(f'unsupported object_target_mode={object_target_mode!r}')
+        if self.object_quality_power <= 0.0:
+            raise ValueError('object_quality_power must be positive')
 
         object_empty_weight = torch.ones(2, dtype=torch.float32)
         object_empty_weight[1] = float(object_eos_coef)
@@ -116,9 +124,10 @@ class CondLSTRParitySetCriterion(nn.Module):
 
         num_targets = float(sum(int(target['gt_row_rng'].size(0)) for target in targets))
         normalizer = max(num_targets, 1.0)
+        object_quality_targets = pred_object_logits.new_zeros(pred_object_logits.shape[:2])
 
         losses = {
-            'loss_object': self.loss_object(pred_object_logits, targets, indices),
+            'loss_object': pred_object_logits.new_tensor(0.0),
             'loss_class': pred_object_logits.new_tensor(0.0),
             'loss_loc': pred_object_logits.new_tensor(0.0),
             'loss_reg': pred_object_logits.new_tensor(0.0),
@@ -176,6 +185,9 @@ class CondLSTRParitySetCriterion(nn.Module):
             )
             union = union * target_row_location_mask
             row_iou = overlap.sum(dim=1) / (union.sum(dim=1) + 1e-9)
+            object_quality_targets[batch_index, src_idx] = row_iou.detach().clamp(0.0, 1.0).pow(
+                self.object_quality_power
+            )
             total_row_iou = total_row_iou + (1.0 - row_iou).sum()
 
             valid_regression_counts = target_row_reg_mask.sum(dim=(1, 2)).clamp(min=1.0)
@@ -205,6 +217,7 @@ class CondLSTRParitySetCriterion(nn.Module):
                 torch.cat(matched_class_targets, dim=0),
             )
 
+        losses['loss_object'] = self.loss_object(pred_object_logits, object_quality_targets)
         losses['loss_loc'] = (total_row_l1 + (2.0 * total_row_iou)) / normalizer
         losses['loss_reg'] = total_row_reg / normalizer
         losses['loss_range'] = total_row_range / normalizer
@@ -237,6 +250,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         device = pred_object_logits.device
         batch_size, num_dn_queries = pred_object_logits.shape[:2]
         target_objects = torch.full((batch_size, num_dn_queries), 1, dtype=torch.int64, device=device)
+        object_quality_targets = pred_object_logits.new_zeros((batch_size, num_dn_queries))
 
         total_row_l1 = pred_object_logits.new_tensor(0.0)
         total_row_iou = pred_object_logits.new_tensor(0.0)
@@ -295,6 +309,9 @@ class CondLSTRParitySetCriterion(nn.Module):
             )
             union = union * target_row_location_mask
             row_iou = overlap.sum(dim=1) / (union.sum(dim=1) + 1e-9)
+            object_quality_targets[batch_index, :valid_count] = row_iou.detach().clamp(0.0, 1.0).pow(
+                self.object_quality_power
+            )
             total_row_iou = total_row_iou + (1.0 - row_iou).sum()
 
             valid_regression_counts = target_row_reg_mask.sum(dim=(1, 2)).clamp(min=1.0)
@@ -320,11 +337,7 @@ class CondLSTRParitySetCriterion(nn.Module):
 
         normalizer = max(valid_total, 1.0)
         losses = {
-            'loss_dn_object': F.cross_entropy(
-                pred_object_logits.transpose(1, 2),
-                target_objects,
-                weight=self.object_empty_weight,
-            ),
+            'loss_dn_object': self.loss_object(pred_object_logits, object_quality_targets),
             'loss_dn_class': pred_object_logits.new_tensor(0.0),
             'loss_dn_loc': (total_row_l1 + (2.0 * total_row_iou)) / normalizer,
             'loss_dn_reg': total_row_reg / normalizer,
@@ -482,22 +495,20 @@ class CondLSTRParitySetCriterion(nn.Module):
     def loss_object(
         self,
         pred_object_logits: torch.Tensor,
-        targets: Sequence[Dict[str, torch.Tensor]],
-        indices: Sequence[Tuple[torch.Tensor, torch.Tensor]],
+        object_quality_targets: torch.Tensor,
     ) -> torch.Tensor:
-        target_objects = torch.full(
-            pred_object_logits.shape[:2],
-            1,
-            dtype=torch.int64,
-            device=pred_object_logits.device,
-        )
-        for batch_index, (src_idx, tgt_idx) in enumerate(indices):
-            if src_idx.numel() == 0:
-                continue
-            target_objects[batch_index, src_idx] = targets[batch_index]['gt_label_obj'][tgt_idx].long()
+        if self.object_target_mode == 'binary':
+            target_objects = (object_quality_targets <= 0.0).to(torch.int64)
+            return F.cross_entropy(
+                pred_object_logits.transpose(1, 2),
+                target_objects,
+                weight=self.object_empty_weight,
+            )
 
-        return F.cross_entropy(
-            pred_object_logits.transpose(1, 2),
-            target_objects,
-            weight=self.object_empty_weight,
-        )
+        fg_quality = object_quality_targets.clamp(0.0, 1.0)
+        target_probs = torch.stack((fg_quality, 1.0 - fg_quality), dim=-1)
+        log_probs = F.log_softmax(pred_object_logits, dim=-1)
+        weighted_targets = target_probs * self.object_empty_weight.view(1, 1, -1)
+        denom = weighted_targets.sum(dim=-1).clamp_min(1e-6)
+        loss = -(weighted_targets * log_probs).sum(dim=-1) / denom
+        return loss.mean()
