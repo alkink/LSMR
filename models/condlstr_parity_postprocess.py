@@ -14,6 +14,17 @@ def _require_single_channel_dense_output(tensor: torch.Tensor, name: str) -> tor
     raise ValueError(f'{name} must have shape [B, Q, H, W] or [B, Q, 1, H, W], got {tuple(tensor.shape)}')
 
 
+def _compute_query_scores(outputs: Dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    object_probs = F.softmax(outputs['pred_object_logits'], dim=-1)[..., 0]
+    pred_quality_logits = outputs.get('pred_quality_logits')
+    if pred_quality_logits is None:
+        return object_probs, object_probs, None
+
+    quality_probs = torch.sigmoid(pred_quality_logits[..., 0])
+    final_scores = object_probs * quality_probs
+    return final_scores, object_probs, quality_probs
+
+
 def _decode_query_lane_points(
     row_locations: torch.Tensor,
     pred_range: torch.Tensor,
@@ -98,7 +109,6 @@ def parity_outputs_to_lane_coords(
     pred_dense_mask = _require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
     pred_dense_reg = _require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
 
-    object_probs = F.softmax(pred_object_logits, dim=-1)[..., 0]
     row_probabilities = pred_dense_mask.softmax(dim=-1)
     column_positions = torch.arange(pred_dense_mask.size(-1), dtype=pred_dense_mask.dtype, device=pred_dense_mask.device)
     row_centers = (row_probabilities * column_positions.view(1, 1, 1, -1)).sum(dim=-1)
@@ -141,7 +151,7 @@ def decode_parity_query_lanes(
     pred_dense_mask = _require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
     pred_dense_reg = _require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
 
-    object_probs = F.softmax(pred_object_logits, dim=-1)[..., 0]
+    final_scores, object_probs, quality_probs = _compute_query_scores(outputs)
     row_probabilities = pred_dense_mask.softmax(dim=-1)
     column_positions = torch.arange(pred_dense_mask.size(-1), dtype=pred_dense_mask.dtype, device=pred_dense_mask.device)
     row_centers = (row_probabilities * column_positions.view(1, 1, 1, -1)).sum(dim=-1)
@@ -155,13 +165,13 @@ def decode_parity_query_lanes(
         image_w = int(target_sizes[batch_index, 1].item())
 
         keep = torch.arange(pred_object_logits.size(1), device=pred_object_logits.device, dtype=torch.long)
-        keep_scores = object_probs[batch_index, keep]
+        keep_scores = final_scores[batch_index, keep]
         order = torch.argsort(keep_scores, descending=True)
         keep = keep[order]
 
         image_queries: List[Dict[str, object]] = []
         for query_index in keep.tolist():
-            score = float(object_probs[batch_index, query_index].item())
+            score = float(final_scores[batch_index, query_index].item())
             if score < float(score_thresh):
                 continue
             if pred_row_visibility_logits is not None:
@@ -184,12 +194,16 @@ def decode_parity_query_lanes(
                     min_points=min_points,
                 )
             if lane_points:
+                query_info: Dict[str, object] = {
+                    'query_index': int(query_index),
+                    'score': score,
+                    'object_score': float(object_probs[batch_index, query_index].item()),
+                    'points': lane_points,
+                }
+                if quality_probs is not None:
+                    query_info['quality_score'] = float(quality_probs[batch_index, query_index].item())
                 image_queries.append(
-                    {
-                        'query_index': int(query_index),
-                        'score': score,
-                        'points': lane_points,
-                    }
+                    query_info
                 )
         if max_lanes is not None:
             image_queries = image_queries[: max(0, int(max_lanes))]

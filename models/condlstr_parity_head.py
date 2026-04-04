@@ -40,17 +40,20 @@ class QueryBranchHead(nn.Module):
         mask_bias_channels: int,
         predict_ranges: bool = True,
         visibility_dim: int = 0,
+        use_quality_head: bool = False,
     ):
         super().__init__()
         self.object_logits = self._make_branch(query_dim, hidden_dim, 2, init_logits_bias=True)
         self.class_logits = self._make_branch(query_dim, hidden_dim, num_classes)
         self.predict_ranges = bool(predict_ranges)
         self.visibility_dim = int(visibility_dim)
+        self.use_quality_head = bool(use_quality_head)
         self.ranges = self._make_branch(query_dim, hidden_dim, 2) if self.predict_ranges else None
         self.visibility_logits = (
             self._make_branch(query_dim, hidden_dim, self.visibility_dim)
             if self.visibility_dim > 0 else None
         )
+        self.quality_logits = self._make_branch(query_dim, hidden_dim, 1) if self.use_quality_head else None
         self.mask_params = self._make_branch(
             query_dim,
             hidden_dim,
@@ -97,6 +100,8 @@ class QueryBranchHead(nn.Module):
             outputs['pred_ranges'] = self.ranges(query_features).sigmoid()
         if self.visibility_logits is not None:
             outputs['pred_row_visibility_logits'] = self.visibility_logits(query_features)
+        if self.quality_logits is not None:
+            outputs['pred_quality_logits'] = self.quality_logits(query_features)
         return outputs
 
 
@@ -165,6 +170,7 @@ class CondLSTRParityHead(nn.Module):
         use_coords: bool = False,
         predict_ranges: bool = True,
         visibility_dim: int = 0,
+        use_quality_head: bool = False,
     ):
         super().__init__()
         self.mask_out_channels = mask_out_channels
@@ -188,6 +194,7 @@ class CondLSTRParityHead(nn.Module):
             mask_bias_channels=mask_out_channels,
             predict_ranges=predict_ranges,
             visibility_dim=visibility_dim,
+            use_quality_head=use_quality_head,
         )
 
     def forward(

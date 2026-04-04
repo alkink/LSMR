@@ -69,6 +69,9 @@ class model(_BaseTransformerModel):
         self.dense_relation_dropout = float(system_configs.full.get('dense_relation_dropout', 0.1))
         self.dense_range_mode = str(system_configs.full.get('dense_range_mode', 'range')).lower()
         self.dense_visibility_dim = int(system_configs.full.get('dense_visibility_dim', 0))
+        self.dense_quality_head_enabled = bool(system_configs.full.get('dense_quality_head_enabled', False))
+        self.dense_quality_loss_weight = float(system_configs.full.get('dense_quality_loss_weight', 5.0))
+        self.dense_quality_target_power = float(system_configs.full.get('dense_quality_target_power', 1.0))
         if self.dense_query_mode not in {'learned', 'geo_anchor'}:
             raise ValueError(f"Unsupported dense_query_mode={self.dense_query_mode!r}")
         if self.dense_decoder_init_mode not in {'legacy_query_embed', 'learned_target_embed'}:
@@ -130,6 +133,7 @@ class model(_BaseTransformerModel):
             use_coords=use_coords,
             predict_ranges=self.dense_range_mode != 'visibility',
             visibility_dim=self.dense_visibility_dim if self.dense_range_mode == 'visibility' else 0,
+            use_quality_head=self.dense_quality_head_enabled,
         )
         if self.dn_lane_enabled:
             self.dn_query_encoder = nn.Sequential(
@@ -149,6 +153,7 @@ class model(_BaseTransformerModel):
             f"use_coords={use_coords}, query_mode={self.dense_query_mode}, "
             f"decoder_init_mode={self.dense_decoder_init_mode}, "
             f"range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim}, "
+            f"quality_head={self.dense_quality_head_enabled}, "
             f"relation_mode={self.dense_relation_mode}, relation_layers={self.dense_relation_layers})"
         )
         if self.dn_lane_enabled:
@@ -318,6 +323,9 @@ class loss(nn.Module):
         self.match_diag_path = os.path.join(self.debug_path, 'match_diag_train.jsonl')
         self.object_target_mode = str(system_configs.full.get('dense_object_target_mode', 'binary')).lower()
         self.object_quality_power = float(system_configs.full.get('dense_object_quality_power', 1.0))
+        self.dense_quality_head_enabled = bool(system_configs.full.get('dense_quality_head_enabled', False))
+        self.dense_quality_loss_weight = float(system_configs.full.get('dense_quality_loss_weight', 5.0))
+        self.dense_quality_target_power = float(system_configs.full.get('dense_quality_target_power', 1.0))
         self.object_curriculum_start = int(system_configs.full.get('dense_object_curriculum_start_iter', 0))
         self.object_curriculum_end = int(system_configs.full.get('dense_object_curriculum_end_iter', 0))
         os.makedirs(self.debug_path, exist_ok=True)
@@ -329,6 +337,8 @@ class loss(nn.Module):
             'loss_reg': float(system_configs.full.get('dense_loss_reg_weight', 1.0)),
             'loss_range': float(system_configs.full.get('dense_loss_range_weight', 20.0)),
         }
+        if self.dense_quality_head_enabled and self.dense_quality_loss_weight > 0.0:
+            self.weight_dict['loss_quality'] = self.dense_quality_loss_weight
         if self.dn_lane_num_queries > 0 and self.dn_lane_loss_weight > 0.0:
             self.weight_dict.update(
                 {
@@ -364,6 +374,7 @@ class loss(nn.Module):
             object_eos_coef=float(system_configs.full.get('dense_object_eos_coef', 0.4)),
             object_target_mode=self.object_target_mode,
             object_quality_power=self.object_quality_power,
+            quality_target_power=self.dense_quality_target_power,
         )
 
         print(f"[LSTR_CULANE_condlstr_parity_base] weight_dict: {self.weight_dict}")
@@ -371,6 +382,8 @@ class loss(nn.Module):
             "[LSTR_CULANE_condlstr_parity_base] "
             f"object_target_mode={self.criterion.object_target_mode} "
             f"object_quality_power={self.criterion.object_quality_power} "
+            f"quality_head={self.dense_quality_head_enabled} "
+            f"quality_target_power={self.criterion.quality_target_power} "
             f"object_curriculum=({self.object_curriculum_start}->{self.object_curriculum_end})"
         )
 

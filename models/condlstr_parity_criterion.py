@@ -13,6 +13,7 @@ class CondLSTRParitySetCriterion(nn.Module):
     PREDICTION_KEYS = (
         'pred_object_logits',
         'pred_class_logits',
+        'pred_quality_logits',
         'pred_ranges',
         'pred_row_visibility_logits',
         'pred_dense_mask',
@@ -27,6 +28,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         ignore_class_index: int = 255,
         object_target_mode: str = 'binary',
         object_quality_power: float = 1.0,
+        quality_target_power: float = 1.0,
     ):
         super().__init__()
         self.matcher = matcher
@@ -34,14 +36,21 @@ class CondLSTRParitySetCriterion(nn.Module):
         self.ignore_class_index = int(ignore_class_index)
         self.object_target_mode = str(object_target_mode).lower()
         self.object_quality_power = float(object_quality_power)
+        self.quality_target_power = float(quality_target_power)
         if self.object_target_mode not in {'binary', 'row_iou'}:
             raise ValueError(f'unsupported object_target_mode={object_target_mode!r}')
         if self.object_quality_power <= 0.0:
             raise ValueError('object_quality_power must be positive')
+        if self.quality_target_power <= 0.0:
+            raise ValueError('quality_target_power must be positive')
 
         object_empty_weight = torch.ones(2, dtype=torch.float32)
         object_empty_weight[1] = float(object_eos_coef)
         self.register_buffer('object_empty_weight', object_empty_weight)
+        self.register_buffer(
+            'quality_pos_weight',
+            torch.tensor([1.0 / max(float(object_eos_coef), 1e-6)], dtype=torch.float32),
+        )
 
     def forward(
         self,
@@ -124,6 +133,7 @@ class CondLSTRParitySetCriterion(nn.Module):
 
         pred_object_logits = outputs['pred_object_logits']
         pred_class_logits = outputs['pred_class_logits']
+        pred_quality_logits = outputs.get('pred_quality_logits')
         pred_ranges = outputs.get('pred_ranges')
         pred_row_visibility_logits = outputs.get('pred_row_visibility_logits')
         pred_dense_mask = self.matcher._require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
@@ -133,6 +143,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         num_targets = float(sum(int(target['gt_row_rng'].size(0)) for target in targets))
         normalizer = max(num_targets, 1.0)
         object_quality_targets = pred_object_logits.new_zeros(pred_object_logits.shape[:2])
+        quality_targets = pred_object_logits.new_zeros(pred_object_logits.shape[:2])
 
         losses = {
             'loss_object': pred_object_logits.new_tensor(0.0),
@@ -141,6 +152,8 @@ class CondLSTRParitySetCriterion(nn.Module):
             'loss_reg': pred_object_logits.new_tensor(0.0),
             'loss_range': pred_object_logits.new_tensor(0.0),
         }
+        if pred_quality_logits is not None:
+            losses['loss_quality'] = pred_object_logits.new_tensor(0.0)
 
         matched_class_logits: List[torch.Tensor] = []
         matched_class_targets: List[torch.Tensor] = []
@@ -196,6 +209,9 @@ class CondLSTRParitySetCriterion(nn.Module):
             object_quality_targets[batch_index, src_idx] = row_iou.detach().clamp(0.0, 1.0).pow(
                 self.object_quality_power
             )
+            quality_targets[batch_index, src_idx] = row_iou.detach().clamp(0.0, 1.0).pow(
+                self.quality_target_power
+            )
             total_row_iou = total_row_iou + (1.0 - row_iou).sum()
 
             valid_regression_counts = target_row_reg_mask.sum(dim=(1, 2)).clamp(min=1.0)
@@ -230,6 +246,12 @@ class CondLSTRParitySetCriterion(nn.Module):
             object_quality_targets,
             object_quality_mix=object_quality_mix,
         )
+        if pred_quality_logits is not None:
+            losses['loss_quality'] = F.binary_cross_entropy_with_logits(
+                pred_quality_logits[..., 0],
+                quality_targets,
+                pos_weight=self.quality_pos_weight,
+            )
         losses['loss_loc'] = (total_row_l1 + (2.0 * total_row_iou)) / normalizer
         losses['loss_reg'] = total_row_reg / normalizer
         losses['loss_range'] = total_row_range / normalizer
@@ -473,6 +495,9 @@ class CondLSTRParitySetCriterion(nn.Module):
         dn_valid_counts: torch.Tensor | None,
     ) -> None:
         main_fg_probs = F.softmax(main_outputs['pred_object_logits'], dim=-1)[..., 0]
+        main_quality_probs = None
+        if 'pred_quality_logits' in main_outputs:
+            main_quality_probs = torch.sigmoid(main_outputs['pred_quality_logits'][..., 0])
 
         def _stats(values: torch.Tensor) -> Dict[str, float | int]:
             if values.numel() == 0:
@@ -499,15 +524,24 @@ class CondLSTRParitySetCriterion(nn.Module):
 
         for batch_index, payload in enumerate(diagnostics):
             payload['main_object_fg_stats'] = _stats(main_fg_probs[batch_index])
+            if main_quality_probs is not None:
+                payload['main_quality_stats'] = _stats(main_quality_probs[batch_index])
             if dn_outputs is None or dn_valid_counts is None:
                 continue
 
             dn_fg_probs = F.softmax(dn_outputs['pred_object_logits'][batch_index], dim=-1)[..., 0]
+            dn_quality_probs = None
+            if 'pred_quality_logits' in dn_outputs:
+                dn_quality_probs = torch.sigmoid(dn_outputs['pred_quality_logits'][batch_index, ..., 0])
             valid_count = int(min(int(dn_valid_counts[batch_index].item()), int(dn_fg_probs.numel())))
             payload['dn_valid_count'] = valid_count
             payload['dn_object_fg_stats_all'] = _stats(dn_fg_probs)
             payload['dn_object_fg_stats_valid'] = _stats(dn_fg_probs[:valid_count])
             payload['dn_object_fg_stats_unused'] = _stats(dn_fg_probs[valid_count:])
+            if dn_quality_probs is not None:
+                payload['dn_quality_stats_all'] = _stats(dn_quality_probs)
+                payload['dn_quality_stats_valid'] = _stats(dn_quality_probs[:valid_count])
+                payload['dn_quality_stats_unused'] = _stats(dn_quality_probs[valid_count:])
 
     def loss_object(
         self,
