@@ -316,6 +316,10 @@ class loss(nn.Module):
         self.match_diag_enabled = bool(system_configs.full.get('match_diag_enabled', False))
         self.match_diag_interval = max(int(system_configs.full.get('match_diag_interval', 500)), 1)
         self.match_diag_path = os.path.join(self.debug_path, 'match_diag_train.jsonl')
+        self.object_target_mode = str(system_configs.full.get('dense_object_target_mode', 'binary')).lower()
+        self.object_quality_power = float(system_configs.full.get('dense_object_quality_power', 1.0))
+        self.object_curriculum_start = int(system_configs.full.get('dense_object_curriculum_start_iter', 0))
+        self.object_curriculum_end = int(system_configs.full.get('dense_object_curriculum_end_iter', 0))
         os.makedirs(self.debug_path, exist_ok=True)
 
         self.weight_dict = {
@@ -358,15 +362,16 @@ class loss(nn.Module):
             matcher=matcher,
             line_width=self.line_width,
             object_eos_coef=float(system_configs.full.get('dense_object_eos_coef', 0.4)),
-            object_target_mode=str(system_configs.full.get('dense_object_target_mode', 'binary')),
-            object_quality_power=float(system_configs.full.get('dense_object_quality_power', 1.0)),
+            object_target_mode=self.object_target_mode,
+            object_quality_power=self.object_quality_power,
         )
 
         print(f"[LSTR_CULANE_condlstr_parity_base] weight_dict: {self.weight_dict}")
         print(
             "[LSTR_CULANE_condlstr_parity_base] "
             f"object_target_mode={self.criterion.object_target_mode} "
-            f"object_quality_power={self.criterion.object_quality_power}"
+            f"object_quality_power={self.criterion.object_quality_power} "
+            f"object_curriculum=({self.object_curriculum_start}->{self.object_curriculum_end})"
         )
 
     def _append_match_diagnostics(self, iteration: int, diagnostics: List[Dict[str, object]]) -> None:
@@ -392,11 +397,24 @@ class loss(nn.Module):
         )
         collect_diagnostics = self.match_diag_enabled and (int(iteration) % self.match_diag_interval == 0)
 
+        object_quality_mix = 1.0
+        if self.object_target_mode == 'row_iou':
+            start = int(self.object_curriculum_start)
+            end = int(self.object_curriculum_end)
+            if end > start:
+                if int(iteration) <= start:
+                    object_quality_mix = 0.0
+                elif int(iteration) >= end:
+                    object_quality_mix = 1.0
+                else:
+                    object_quality_mix = float(int(iteration) - start) / float(end - start)
+
         loss_dict, _, diagnostics = self.criterion(
             outputs,
             dense_targets,
             image_keys=kwargs.get('image_keys'),
             collect_diagnostics=collect_diagnostics,
+            object_quality_mix=object_quality_mix,
         )
         if diagnostics:
             self._append_match_diagnostics(int(iteration), diagnostics)

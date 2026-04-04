@@ -49,6 +49,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         targets: Sequence[Dict[str, torch.Tensor]],
         image_keys: Sequence[str] | None = None,
         collect_diagnostics: bool = False,
+        object_quality_mix: float = 1.0,
     ) -> Tuple[Dict[str, torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]], List[Dict[str, object]]]:
         dn_meta = outputs.get('dn_meta')
         total_queries = int(outputs['pred_object_logits'].shape[1])
@@ -60,12 +61,17 @@ class CondLSTRParitySetCriterion(nn.Module):
             targets,
             image_keys=image_keys,
             collect_diagnostics=collect_diagnostics,
+            object_quality_mix=object_quality_mix,
         )
 
         aux_outputs = outputs.get('aux_outputs', [])
         for layer_index, aux_output in enumerate(aux_outputs):
             aux_main_outputs = self._slice_outputs_for_queries(aux_output, 0, num_main_queries)
-            aux_loss_dict, _, _ = self._compute_losses(aux_main_outputs, targets)
+            aux_loss_dict, _, _ = self._compute_losses(
+                aux_main_outputs,
+                targets,
+                object_quality_mix=object_quality_mix,
+            )
             for name, value in aux_loss_dict.items():
                 loss_dict[f'{name}_{layer_index}'] = value
 
@@ -75,6 +81,7 @@ class CondLSTRParitySetCriterion(nn.Module):
                 dn_outputs,
                 dn_targets=dn_meta['targets'],
                 dn_valid_counts=dn_meta['valid_counts'],
+                object_quality_mix=object_quality_mix,
             )
             loss_dict.update(dn_loss_dict)
         else:
@@ -107,6 +114,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         targets: Sequence[Dict[str, torch.Tensor]],
         image_keys: Sequence[str] | None = None,
         collect_diagnostics: bool = False,
+        object_quality_mix: float = 1.0,
     ) -> Tuple[Dict[str, torch.Tensor], List[Tuple[torch.Tensor, torch.Tensor]], List[Dict[str, object]]]:
         cost_breakdowns: List[DenseMatchCostBreakdown] | None = None
         if collect_diagnostics:
@@ -217,7 +225,11 @@ class CondLSTRParitySetCriterion(nn.Module):
                 torch.cat(matched_class_targets, dim=0),
             )
 
-        losses['loss_object'] = self.loss_object(pred_object_logits, object_quality_targets)
+        losses['loss_object'] = self.loss_object(
+            pred_object_logits,
+            object_quality_targets,
+            object_quality_mix=object_quality_mix,
+        )
         losses['loss_loc'] = (total_row_l1 + (2.0 * total_row_iou)) / normalizer
         losses['loss_reg'] = total_row_reg / normalizer
         losses['loss_range'] = total_row_range / normalizer
@@ -238,6 +250,7 @@ class CondLSTRParitySetCriterion(nn.Module):
         outputs: Dict[str, torch.Tensor],
         dn_targets: Sequence[Dict[str, torch.Tensor]],
         dn_valid_counts: torch.Tensor,
+        object_quality_mix: float = 1.0,
     ) -> Dict[str, torch.Tensor]:
         pred_object_logits = outputs['pred_object_logits']
         pred_class_logits = outputs['pred_class_logits']
@@ -337,7 +350,11 @@ class CondLSTRParitySetCriterion(nn.Module):
 
         normalizer = max(valid_total, 1.0)
         losses = {
-            'loss_dn_object': self.loss_object(pred_object_logits, object_quality_targets),
+            'loss_dn_object': self.loss_object(
+                pred_object_logits,
+                object_quality_targets,
+                object_quality_mix=object_quality_mix,
+            ),
             'loss_dn_class': pred_object_logits.new_tensor(0.0),
             'loss_dn_loc': (total_row_l1 + (2.0 * total_row_iou)) / normalizer,
             'loss_dn_reg': total_row_reg / normalizer,
@@ -496,7 +513,9 @@ class CondLSTRParitySetCriterion(nn.Module):
         self,
         pred_object_logits: torch.Tensor,
         object_quality_targets: torch.Tensor,
+        object_quality_mix: float = 1.0,
     ) -> torch.Tensor:
+        object_quality_mix = float(min(max(object_quality_mix, 0.0), 1.0))
         if self.object_target_mode == 'binary':
             target_objects = (object_quality_targets <= 0.0).to(torch.int64)
             return F.cross_entropy(
@@ -506,7 +525,9 @@ class CondLSTRParitySetCriterion(nn.Module):
             )
 
         fg_quality = object_quality_targets.clamp(0.0, 1.0)
-        target_probs = torch.stack((fg_quality, 1.0 - fg_quality), dim=-1)
+        binary_fg = (fg_quality > 0.0).float()
+        fg_target = ((1.0 - object_quality_mix) * binary_fg) + (object_quality_mix * fg_quality)
+        target_probs = torch.stack((fg_target, 1.0 - fg_target), dim=-1)
         log_probs = F.log_softmax(pred_object_logits, dim=-1)
         weighted_targets = target_probs * self.object_empty_weight.view(1, 1, -1)
         denom = weighted_targets.sum(dim=-1).clamp_min(1e-6)
