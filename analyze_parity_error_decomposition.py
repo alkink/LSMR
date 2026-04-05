@@ -189,6 +189,16 @@ def _summarize_lane_records(lane_records: List[Dict[str, object]]) -> Dict[str, 
     conflict_post = sum(1 for rec in lane_records if rec["has_candidate_post"] and not rec["matched_post_oracle"])
     best_ious = [float(rec["best_iou"]) for rec in lane_records]
     best_scores = [float(rec["best_query_score"]) for rec in lane_records if rec["best_query_score"] is not None]
+    best_object_scores = [
+        float(rec["best_query_object_score"])
+        for rec in lane_records
+        if rec.get("best_query_object_score") is not None
+    ]
+    best_quality_scores = [
+        float(rec["best_query_quality_score"])
+        for rec in lane_records
+        if rec.get("best_query_quality_score") is not None
+    ]
     iou_buckets = {
         "0.0-0.1": 0,
         "0.1-0.3": 0,
@@ -211,6 +221,12 @@ def _summarize_lane_records(lane_records: List[Dict[str, object]]) -> Dict[str, 
         "shared_query_conflict_post_ratio": (conflict_post / total) if total else None,
         "mean_best_iou": (sum(best_ious) / len(best_ious)) if best_ious else None,
         "mean_best_query_score": (sum(best_scores) / len(best_scores)) if best_scores else None,
+        "mean_best_query_object_score": (
+            (sum(best_object_scores) / len(best_object_scores)) if best_object_scores else None
+        ),
+        "mean_best_query_quality_score": (
+            (sum(best_quality_scores) / len(best_quality_scores)) if best_quality_scores else None
+        ),
         "best_iou_buckets": iou_buckets,
         "counts": {
             "prethreshold_candidate": pre,
@@ -322,6 +338,14 @@ def main():
         gt_masks = [_lane_to_mask(lane, (image_h, image_w), args.line_width) for lane in gt_lanes]
         pred_masks = [_lane_to_mask(query_info["points"], (image_h, image_w), args.line_width) for query_info in decoded_queries]
         pred_scores = np.asarray([float(query_info["score"]) for query_info in decoded_queries], dtype=np.float32)
+        pred_object_scores = np.asarray(
+            [float(query_info.get("object_score", query_info["score"])) for query_info in decoded_queries],
+            dtype=np.float32,
+        )
+        pred_quality_scores = np.asarray(
+            [float(query_info.get("quality_score", 1.0)) for query_info in decoded_queries],
+            dtype=np.float32,
+        )
         query_slot_ids = [int(query_info["query_index"]) for query_info in decoded_queries]
         iou_matrix = np.zeros((len(gt_lanes), len(decoded_queries)), dtype=np.float32)
         for gt_index, gt_mask in enumerate(gt_masks):
@@ -355,6 +379,8 @@ def main():
                 best_query_idx = int(np.argmax(np.asarray(query_ious, dtype=np.float32)))
                 best_iou = float(query_ious[best_query_idx])
                 best_score = float(query_scores[best_query_idx])
+                best_object_score = float(pred_object_scores[best_query_idx])
+                best_quality_score = float(pred_quality_scores[best_query_idx])
                 best_query_id = int(decoded_queries[best_query_idx]["query_index"])
                 good_query_indices = [idx for idx, value in enumerate(query_ious) if value >= float(args.iou_thresh)]
                 post_query_indices = [
@@ -364,6 +390,8 @@ def main():
                 best_query_idx = -1
                 best_iou = 0.0
                 best_score = None
+                best_object_score = None
+                best_quality_score = None
                 best_query_id = None
                 good_query_indices = []
                 post_query_indices = []
@@ -378,6 +406,8 @@ def main():
                 "best_query_rank_in_decoded": best_query_idx,
                 "best_iou": best_iou,
                 "best_query_score": best_score,
+                "best_query_object_score": best_object_score,
+                "best_query_quality_score": best_quality_score,
                 "num_decoded_queries": int(len(decoded_queries)),
                 "num_good_queries": int(len(good_query_indices)),
                 "has_candidate_pre": bool(best_iou >= float(args.iou_thresh)),
