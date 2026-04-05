@@ -29,6 +29,9 @@ class CondLSTRParitySetCriterion(nn.Module):
         object_target_mode: str = 'binary',
         object_quality_power: float = 1.0,
         quality_target_power: float = 1.0,
+        quality_soft_positive_enabled: bool = False,
+        quality_soft_positive_iou_thresh: float = 0.5,
+        quality_soft_positive_decay: float = 0.5,
     ):
         super().__init__()
         self.matcher = matcher
@@ -37,12 +40,19 @@ class CondLSTRParitySetCriterion(nn.Module):
         self.object_target_mode = str(object_target_mode).lower()
         self.object_quality_power = float(object_quality_power)
         self.quality_target_power = float(quality_target_power)
+        self.quality_soft_positive_enabled = bool(quality_soft_positive_enabled)
+        self.quality_soft_positive_iou_thresh = float(quality_soft_positive_iou_thresh)
+        self.quality_soft_positive_decay = float(quality_soft_positive_decay)
         if self.object_target_mode not in {'binary', 'row_iou'}:
             raise ValueError(f'unsupported object_target_mode={object_target_mode!r}')
         if self.object_quality_power <= 0.0:
             raise ValueError('object_quality_power must be positive')
         if self.quality_target_power <= 0.0:
             raise ValueError('quality_target_power must be positive')
+        if not (0.0 <= self.quality_soft_positive_iou_thresh <= 1.0):
+            raise ValueError('quality_soft_positive_iou_thresh must be in [0, 1]')
+        if not (0.0 <= self.quality_soft_positive_decay <= 1.0):
+            raise ValueError('quality_soft_positive_decay must be in [0, 1]')
 
         object_empty_weight = torch.ones(2, dtype=torch.float32)
         object_empty_weight[1] = float(object_eos_coef)
@@ -117,6 +127,70 @@ class CondLSTRParitySetCriterion(nn.Module):
                 sliced[key] = outputs[key][:, start:end]
         return sliced
 
+    def _compute_pairwise_row_iou(
+        self,
+        pred_row_locations: torch.Tensor,
+        target_row_locations: torch.Tensor,
+        target_row_location_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        pred_row_left = pred_row_locations.unsqueeze(1) - self.line_width
+        pred_row_right = pred_row_locations.unsqueeze(1) + self.line_width
+        target_row_left = target_row_locations.unsqueeze(0) - self.line_width
+        target_row_right = target_row_locations.unsqueeze(0) + self.line_width
+
+        overlap = (
+            torch.minimum(pred_row_right, target_row_right) - torch.maximum(pred_row_left, target_row_left)
+        ).clamp(min=0.0)
+        overlap = overlap * target_row_location_mask.unsqueeze(0)
+
+        union = (
+            torch.maximum(pred_row_right, target_row_right) - torch.minimum(pred_row_left, target_row_left)
+        )
+        union = union * target_row_location_mask.unsqueeze(0)
+        return overlap.sum(dim=2) / (union.sum(dim=2) + 1e-9)
+
+    def _assign_soft_quality_targets(
+        self,
+        quality_targets: torch.Tensor,
+        pairwise_row_iou: torch.Tensor,
+        matched_src_idx: torch.Tensor,
+    ) -> None:
+        if not self.quality_soft_positive_enabled:
+            return
+        if pairwise_row_iou.numel() == 0:
+            return
+
+        num_queries, num_targets = pairwise_row_iou.shape
+        if num_queries == 0 or num_targets == 0:
+            return
+
+        candidate_mask = pairwise_row_iou >= self.quality_soft_positive_iou_thresh
+        if matched_src_idx.numel() > 0:
+            unmatched_query_mask = torch.ones((num_queries,), dtype=torch.bool, device=pairwise_row_iou.device)
+            unmatched_query_mask[matched_src_idx] = False
+            candidate_mask = candidate_mask & unmatched_query_mask.unsqueeze(1)
+
+        candidate_pairs = torch.nonzero(candidate_mask, as_tuple=False)
+        if candidate_pairs.numel() == 0:
+            return
+
+        candidate_scores = pairwise_row_iou[candidate_pairs[:, 0], candidate_pairs[:, 1]]
+        order = torch.argsort(candidate_scores, descending=True)
+        used_queries: set[int] = set()
+        used_targets: set[int] = set()
+
+        for order_index in order.tolist():
+            query_index = int(candidate_pairs[order_index, 0].item())
+            target_index = int(candidate_pairs[order_index, 1].item())
+            if query_index in used_queries or target_index in used_targets:
+                continue
+
+            iou_value = float(candidate_scores[order_index].item())
+            target_value = self.quality_soft_positive_decay * (iou_value ** self.quality_target_power)
+            quality_targets[query_index] = max(float(quality_targets[query_index].item()), target_value)
+            used_queries.add(query_index)
+            used_targets.add(target_index)
+
     def _compute_losses(
         self,
         outputs: Dict[str, torch.Tensor],
@@ -163,16 +237,32 @@ class CondLSTRParitySetCriterion(nn.Module):
         total_row_range = pred_object_logits.new_tensor(0.0)
 
         for batch_index, (src_idx, tgt_idx) in enumerate(indices):
+            target = targets[batch_index]
+            batch_all_pred_row_locations = pred_row_locations[batch_index]
+            batch_all_target_row_locations = target['gt_row_loc']
+            batch_all_target_row_location_mask = target['gt_row_loc_mask']
+
+            if self.quality_soft_positive_enabled:
+                pairwise_row_iou = self._compute_pairwise_row_iou(
+                    pred_row_locations=batch_all_pred_row_locations,
+                    target_row_locations=batch_all_target_row_locations,
+                    target_row_location_mask=batch_all_target_row_location_mask,
+                ).detach().clamp(0.0, 1.0)
+                self._assign_soft_quality_targets(
+                    quality_targets=quality_targets[batch_index],
+                    pairwise_row_iou=pairwise_row_iou,
+                    matched_src_idx=src_idx,
+                )
+
             if src_idx.numel() == 0:
                 continue
 
-            target = targets[batch_index]
             batch_pred_class_logits = pred_class_logits[batch_index, src_idx]
             batch_pred_ranges = pred_ranges[batch_index, src_idx] if pred_ranges is not None else None
             batch_pred_visibility_logits = (
                 pred_row_visibility_logits[batch_index, src_idx] if pred_row_visibility_logits is not None else None
             )
-            batch_pred_row_locations = pred_row_locations[batch_index, src_idx]
+            batch_pred_row_locations = batch_all_pred_row_locations[src_idx]
             batch_pred_dense_reg = pred_dense_reg[batch_index, src_idx]
 
             target_classes = target['gt_label_cls'][tgt_idx].long()
@@ -181,8 +271,8 @@ class CondLSTRParitySetCriterion(nn.Module):
                 matched_class_logits.append(batch_pred_class_logits[valid_class_mask])
                 matched_class_targets.append(target_classes[valid_class_mask])
 
-            target_row_locations = target['gt_row_loc'][tgt_idx]
-            target_row_location_mask = target['gt_row_loc_mask'][tgt_idx]
+            target_row_locations = batch_all_target_row_locations[tgt_idx]
+            target_row_location_mask = batch_all_target_row_location_mask[tgt_idx]
             target_row_ranges = target['gt_row_rng'][tgt_idx]
             target_row_reg = target['gt_row_reg'][tgt_idx]
             target_row_reg_mask = target['gt_row_reg_mask'][tgt_idx]
@@ -193,19 +283,11 @@ class CondLSTRParitySetCriterion(nn.Module):
                 (row_location_error * target_row_location_mask).sum(dim=1) / valid_location_counts
             ).sum()
 
-            pred_row_left = batch_pred_row_locations - self.line_width
-            pred_row_right = batch_pred_row_locations + self.line_width
-            target_row_left = target_row_locations - self.line_width
-            target_row_right = target_row_locations + self.line_width
-            overlap = (
-                torch.minimum(pred_row_right, target_row_right) - torch.maximum(pred_row_left, target_row_left)
-            ).clamp(min=0.0)
-            overlap = overlap * target_row_location_mask
-            union = (
-                torch.maximum(pred_row_right, target_row_right) - torch.minimum(pred_row_left, target_row_left)
-            )
-            union = union * target_row_location_mask
-            row_iou = overlap.sum(dim=1) / (union.sum(dim=1) + 1e-9)
+            row_iou = self._compute_pairwise_row_iou(
+                pred_row_locations=batch_pred_row_locations,
+                target_row_locations=target_row_locations,
+                target_row_location_mask=target_row_location_mask,
+            ).diag()
             object_quality_targets[batch_index, src_idx] = row_iou.detach().clamp(0.0, 1.0).pow(
                 self.object_quality_power
             )

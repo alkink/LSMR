@@ -326,6 +326,15 @@ class loss(nn.Module):
         self.dense_quality_head_enabled = bool(system_configs.full.get('dense_quality_head_enabled', False))
         self.dense_quality_loss_weight = float(system_configs.full.get('dense_quality_loss_weight', 5.0))
         self.dense_quality_target_power = float(system_configs.full.get('dense_quality_target_power', 1.0))
+        self.dense_quality_soft_positive_enabled = bool(
+            system_configs.full.get('dense_quality_soft_positive_enabled', False)
+        )
+        self.dense_quality_soft_positive_iou_thresh = float(
+            system_configs.full.get('dense_quality_soft_positive_iou_thresh', 0.5)
+        )
+        self.dense_quality_soft_positive_decay = float(
+            system_configs.full.get('dense_quality_soft_positive_decay', 0.5)
+        )
         self.object_curriculum_start = int(system_configs.full.get('dense_object_curriculum_start_iter', 0))
         self.object_curriculum_end = int(system_configs.full.get('dense_object_curriculum_end_iter', 0))
         os.makedirs(self.debug_path, exist_ok=True)
@@ -375,6 +384,9 @@ class loss(nn.Module):
             object_target_mode=self.object_target_mode,
             object_quality_power=self.object_quality_power,
             quality_target_power=self.dense_quality_target_power,
+            quality_soft_positive_enabled=self.dense_quality_soft_positive_enabled,
+            quality_soft_positive_iou_thresh=self.dense_quality_soft_positive_iou_thresh,
+            quality_soft_positive_decay=self.dense_quality_soft_positive_decay,
         )
 
         print(f"[LSTR_CULANE_condlstr_parity_base] weight_dict: {self.weight_dict}")
@@ -384,6 +396,9 @@ class loss(nn.Module):
             f"object_quality_power={self.criterion.object_quality_power} "
             f"quality_head={self.dense_quality_head_enabled} "
             f"quality_target_power={self.criterion.quality_target_power} "
+            f"quality_soft_positive={self.dense_quality_soft_positive_enabled} "
+            f"quality_soft_positive_iou_thresh={self.dense_quality_soft_positive_iou_thresh} "
+            f"quality_soft_positive_decay={self.dense_quality_soft_positive_decay} "
             f"object_curriculum=({self.object_curriculum_start}->{self.object_curriculum_end})"
         )
 
