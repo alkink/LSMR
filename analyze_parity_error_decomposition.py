@@ -273,9 +273,17 @@ def main():
 
     score_thresh = args.score_thresh
     if score_thresh is None:
-        score_thresh = float(system_configs.full.get("condlstr_score_thresh", 0.7))
+        env_score_thresh = os.environ.get("LSTR_PARITY_SCORE_THRESH")
+        if env_score_thresh is not None:
+            score_thresh = float(env_score_thresh)
+        else:
+            score_thresh = float(system_configs.full.get("condlstr_score_thresh", 0.7))
 
-    fusion_mode = str(system_configs.full.get("condlstr_fusion_mode", "product"))
+    env_fusion_mode = os.environ.get("LSTR_PARITY_FUSION_MODE")
+    if env_fusion_mode is not None:
+        fusion_mode = str(env_fusion_mode)
+    else:
+        fusion_mode = str(system_configs.full.get("condlstr_fusion_mode", "product"))
 
     db_indices = db.db_inds
     if args.limit is not None:

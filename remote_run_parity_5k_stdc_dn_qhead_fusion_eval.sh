@@ -1,63 +1,63 @@
-#!/usr/bin/env bash
-# Evaluate qhead checkpoint under different fusion modes.
-# No retraining — same checkpoint, only postprocess changes.
-# Runs: sqrt / linear / obj_only, each at thr025 / thr03 / thr04
-#
-# Usage:
-#   bash remote_run_parity_5k_stdc_dn_qhead_fusion_eval.sh
-#
-# Requires: qhead checkpoint at iter 30000 already exists.
+#!/bin/bash
+set -euo pipefail
 
-set -e
-cd /workspace/LSMR
-conda activate clrernet
-
+REPO_ROOT="/workspace/LSMR"
 CFG="LSTR_CULANE_5k_condlstr_parity_stdc_dn_qhead"
-ITER=30000
+ITER="${1:-30000}"
+
+cd "${REPO_ROOT}"
+
+if command -v conda >/dev/null 2>&1; then
+  eval "$(conda shell.bash hook)"
+  conda activate clrernet
+fi
+
+export LSTR_DATA_DIR=/workspace
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+export PYTHONUNBUFFERED=1
 
 FUSIONS=("sqrt" "linear" "obj_only")
-SUFFIXES=("thr025" "thr03" "thr04")
+THRESHOLDS=("0.25" "0.30" "0.40")
+THRESH_TAGS=("thr025" "thr03" "thr04")
 
-for FUSION in "${FUSIONS[@]}"; do
-    for SUFFIX in "${SUFFIXES[@]}"; do
-        EVAL_SUFFIX="${SUFFIX}_${FUSION}"
-        echo ""
-        echo "=========================================="
-        echo "  fusion=${FUSION}  threshold_config=${SUFFIX}  out_suffix=${EVAL_SUFFIX}"
-        echo "=========================================="
+for fusion_index in "${!FUSIONS[@]}"; do
+  FUSION="${FUSIONS[$fusion_index]}"
 
-        LSTR_PARITY_FUSION_MODE="${FUSION}" python test.py \
-            "${CFG}" \
-            --testiter ${ITER} \
-            --suffix "${EVAL_SUFFIX}" \
-            --split testing
+  for threshold_index in "${!THRESHOLDS[@]}"; do
+    SCORE_THRESH="${THRESHOLDS[$threshold_index]}"
+    THRESH_TAG="${THRESH_TAGS[$threshold_index]}"
+    OUTPUT_SUFFIX="${THRESH_TAG}_${FUSION}"
 
-        python eval_culane.py \
-            "${CFG}" \
-            --testiter ${ITER} \
-            --suffix "${EVAL_SUFFIX}" \
-            --split testing \
-            | tee "results/${CFG}/${ITER}_${EVAL_SUFFIX}_iou0.5.txt"
+    echo
+    echo "=========================================="
+    echo "fusion=${FUSION} score_thresh=${SCORE_THRESH} output_suffix=${OUTPUT_SUFFIX}"
+    echo "=========================================="
 
-        echo ">>> ${EVAL_SUFFIX} done."
-    done
+    export LSTR_PARITY_FUSION_MODE="${FUSION}"
+    export LSTR_PARITY_SCORE_THRESH="${SCORE_THRESH}"
+
+    python -u test.py "${CFG}" --suffix "${OUTPUT_SUFFIX}" --modality eval --split testing --testiter "${ITER}" \
+      2>&1 | tee "test_${CFG}_${ITER}_${OUTPUT_SUFFIX}.log"
+
+    bash eval_progressive.sh "${CFG}" "${ITER}" "${OUTPUT_SUFFIX}" \
+      2>&1 | tee "eval_${CFG}_${ITER}_${OUTPUT_SUFFIX}.log"
+
+    echo "[done] ${OUTPUT_SUFFIX}"
+  done
 done
 
-echo ""
-echo "=== ALL FUSION EVALS DONE ==="
-echo "Results in: results/${CFG}/"
-echo ""
-echo "Quick comparison:"
-for FUSION in "${FUSIONS[@]}"; do
-    echo ""
-    echo "--- fusion=${FUSION} ---"
-    for SUFFIX in "${SUFFIXES[@]}"; do
-        EVAL_SUFFIX="${SUFFIX}_${FUSION}"
-        F="${FUSION}"
-        RESULT_FILE="results/${CFG}/${ITER}_${EVAL_SUFFIX}_iou0.5.txt"
-        if [ -f "${RESULT_FILE}" ]; then
-            echo -n "  ${EVAL_SUFFIX}: "
-            grep -oE "F1 = [0-9.]+" "${RESULT_FILE}" | head -1 || cat "${RESULT_FILE}"
-        fi
-    done
+echo
+echo "[summary]"
+for fusion_index in "${!FUSIONS[@]}"; do
+  FUSION="${FUSIONS[$fusion_index]}"
+  echo "[fusion=${FUSION}]"
+  for threshold_index in "${!THRESHOLDS[@]}"; do
+    THRESH_TAG="${THRESH_TAGS[$threshold_index]}"
+    OUTPUT_SUFFIX="${THRESH_TAG}_${FUSION}"
+    RESULT_FILE="results/${CFG}/${ITER}_${OUTPUT_SUFFIX}_iou0.5.txt"
+    echo "  [${OUTPUT_SUFFIX}]"
+    grep -E "precision|recall|Fmeasure|FPS" "${RESULT_FILE}" || true
+  done
+  echo
 done
