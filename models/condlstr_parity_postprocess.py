@@ -14,14 +14,39 @@ def _require_single_channel_dense_output(tensor: torch.Tensor, name: str) -> tor
     raise ValueError(f'{name} must have shape [B, Q, H, W] or [B, Q, 1, H, W], got {tuple(tensor.shape)}')
 
 
-def _compute_query_scores(outputs: Dict[str, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+_VALID_FUSION_MODES = ('product', 'sqrt', 'linear', 'obj_only')
+
+
+def _compute_query_scores(
+    outputs: Dict[str, torch.Tensor],
+    fusion_mode: str = 'product',
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Compute final ranking scores from objectness and optional quality logits.
+
+    fusion_mode:
+      'product'  – obj * qual   (default, most conservative)
+      'sqrt'     – sqrt(obj * qual)
+      'linear'   – 0.5 * obj + 0.5 * qual
+      'obj_only' – obj only, quality head ignored for scoring
+    """
     object_probs = F.softmax(outputs['pred_object_logits'], dim=-1)[..., 0]
     pred_quality_logits = outputs.get('pred_quality_logits')
     if pred_quality_logits is None:
         return object_probs, object_probs, None
+    quality_probs_raw = torch.sigmoid(pred_quality_logits[..., 0])
+    if fusion_mode == 'obj_only':
+        # Quality head exists but scoring ignores it; still expose for diagnostics.
+        return object_probs, object_probs, quality_probs_raw
 
-    quality_probs = torch.sigmoid(pred_quality_logits[..., 0])
-    final_scores = object_probs * quality_probs
+    quality_probs = quality_probs_raw
+    if fusion_mode == 'product':
+        final_scores = object_probs * quality_probs
+    elif fusion_mode == 'sqrt':
+        final_scores = (object_probs * quality_probs).sqrt()
+    elif fusion_mode == 'linear':
+        final_scores = 0.5 * object_probs + 0.5 * quality_probs
+    else:
+        raise ValueError(f'Unknown fusion_mode={fusion_mode!r}. Must be one of {_VALID_FUSION_MODES}')
     return final_scores, object_probs, quality_probs
 
 
@@ -95,6 +120,7 @@ def parity_outputs_to_lane_coords(
     min_points: int = 2,
     max_lanes: int | None = None,
     visibility_thresh: float = 0.5,
+    fusion_mode: str = 'product',
 ) -> List[List[List[Tuple[float, float]]]]:
     required = {'pred_object_logits', 'pred_dense_mask', 'pred_dense_reg'}
     missing = sorted(required.difference(outputs.keys()))
@@ -123,6 +149,7 @@ def parity_outputs_to_lane_coords(
         min_points=min_points,
         max_lanes=max_lanes,
         visibility_thresh=visibility_thresh,
+        fusion_mode=fusion_mode,
     )
     lanes_batch: List[List[List[Tuple[float, float]]]] = []
     for image_queries in query_batch:
@@ -137,6 +164,7 @@ def decode_parity_query_lanes(
     min_points: int = 2,
     max_lanes: int | None = None,
     visibility_thresh: float = 0.5,
+    fusion_mode: str = 'product',
 ) -> List[List[Dict[str, object]]]:
     required = {'pred_object_logits', 'pred_dense_mask', 'pred_dense_reg'}
     missing = sorted(required.difference(outputs.keys()))
@@ -151,7 +179,7 @@ def decode_parity_query_lanes(
     pred_dense_mask = _require_single_channel_dense_output(outputs['pred_dense_mask'], 'pred_dense_mask')
     pred_dense_reg = _require_single_channel_dense_output(outputs['pred_dense_reg'], 'pred_dense_reg')
 
-    final_scores, object_probs, quality_probs = _compute_query_scores(outputs)
+    final_scores, object_probs, quality_probs = _compute_query_scores(outputs, fusion_mode=fusion_mode)
     row_probabilities = pred_dense_mask.softmax(dim=-1)
     column_positions = torch.arange(pred_dense_mask.size(-1), dtype=pred_dense_mask.dtype, device=pred_dense_mask.device)
     row_centers = (row_probabilities * column_positions.view(1, 1, 1, -1)).sum(dim=-1)
@@ -217,6 +245,7 @@ def parity_outputs_to_lane_coords_all_queries(
     target_sizes: torch.Tensor,
     min_points: int = 2,
     visibility_thresh: float = 0.5,
+    fusion_mode: str = 'product',
 ) -> List[List[Dict[str, object]]]:
     return decode_parity_query_lanes(
         outputs=outputs,
@@ -225,4 +254,5 @@ def parity_outputs_to_lane_coords_all_queries(
         min_points=min_points,
         max_lanes=None,
         visibility_thresh=visibility_thresh,
+        fusion_mode=fusion_mode,
     )

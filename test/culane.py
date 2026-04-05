@@ -93,12 +93,20 @@ class PostProcess(nn.Module):
                         visibility_thresh = float(env_visibility_thresh)
                     else:
                         visibility_thresh = float(system_configs.full.get('condlstr_visibility_thresh', 0.5))
+                fusion_mode = outputs.get('fusion_mode')
+                if fusion_mode is None:
+                    env_fusion_mode = os.environ.get('LSTR_PARITY_FUSION_MODE')
+                    if env_fusion_mode is not None:
+                        fusion_mode = env_fusion_mode
+                    else:
+                        fusion_mode = str(system_configs.full.get('condlstr_fusion_mode', 'product'))
                 return parity_outputs_to_lane_coords(
                     outputs=outputs,
                     target_sizes=target_sizes,
                     score_thresh=float(score_thresh),
                     min_points=2,
                     visibility_thresh=float(visibility_thresh),
+                    fusion_mode=str(fusion_mode),
                 )
 
             if dense_outputs_to_lane_coords is None:

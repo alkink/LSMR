@@ -275,6 +275,8 @@ def main():
     if score_thresh is None:
         score_thresh = float(system_configs.full.get("condlstr_score_thresh", 0.7))
 
+    fusion_mode = str(system_configs.full.get("condlstr_fusion_mode", "product"))
+
     db_indices = db.db_inds
     if args.limit is not None:
         db_indices = db_indices[: int(args.limit)]
@@ -306,7 +308,8 @@ def main():
 
     print(
         f"[error-decomp] cfg={args.cfg_file} split={split} images={total_images} "
-        f"iter={args.testiter} score_thresh={score_thresh:.3f} iou_thresh={args.iou_thresh:.3f}"
+        f"iter={args.testiter} score_thresh={score_thresh:.3f} iou_thresh={args.iou_thresh:.3f} "
+        f"fusion_mode={fusion_mode}"
     )
     if scenario_source is None:
         print("[error-decomp] scenario_map=missing source=<none>")
@@ -327,6 +330,7 @@ def main():
         visibility_thresh = float(outputs.get("visibility_thresh", system_configs.full.get("condlstr_visibility_thresh", 0.5)))
         decoded_queries = parity_outputs_to_lane_coords_all_queries(
             outputs=outputs,
+            fusion_mode=fusion_mode,
             target_sizes=target_sizes,
             min_points=2,
             visibility_thresh=visibility_thresh,
