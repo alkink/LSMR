@@ -83,6 +83,16 @@ class model(_BaseTransformerModel):
         if self.dense_range_mode == 'visibility' and self.dense_visibility_dim <= 0:
             raise ValueError('dense_visibility_dim must be positive when dense_range_mode=visibility')
         self.mask_downscale = int(system_configs.full.get('condlstr_mask_downscale', 1))
+        self.parity_transformer_src_hw = system_configs.full.get('parity_transformer_src_hw', None)
+        if self.parity_transformer_src_hw is not None:
+            if not isinstance(self.parity_transformer_src_hw, (list, tuple)) or len(self.parity_transformer_src_hw) != 2:
+                raise ValueError('parity_transformer_src_hw must be [H, W] when provided')
+            self.parity_transformer_src_hw = (
+                int(self.parity_transformer_src_hw[0]),
+                int(self.parity_transformer_src_hw[1]),
+            )
+            if self.parity_transformer_src_hw[0] <= 0 or self.parity_transformer_src_hw[1] <= 0:
+                raise ValueError('parity_transformer_src_hw values must be positive')
         self.dn_lane_num_queries = int(system_configs.full.get('dn_lane_num_queries', 0))
         self.dn_lane_x_noise_scale = float(system_configs.full.get('dn_lane_x_noise_scale', 0.05))
         self.dn_lane_range_noise_scale = float(system_configs.full.get('dn_lane_range_noise_scale', 0.03))
@@ -154,7 +164,8 @@ class model(_BaseTransformerModel):
             f"decoder_init_mode={self.dense_decoder_init_mode}, "
             f"range_mode={self.dense_range_mode}, visibility_dim={self.dense_visibility_dim}, "
             f"quality_head={self.dense_quality_head_enabled}, "
-            f"relation_mode={self.dense_relation_mode}, relation_layers={self.dense_relation_layers})"
+            f"relation_mode={self.dense_relation_mode}, relation_layers={self.dense_relation_layers}, "
+            f"transformer_src_hw={self.parity_transformer_src_hw})"
         )
         if self.dn_lane_enabled:
             print(
@@ -226,7 +237,23 @@ class model(_BaseTransformerModel):
         p = self._extract_backbone_features(images)
 
         pmasks = F.interpolate(masks[:, 0, :, :][None], size=p.shape[-2:]).to(torch.bool)[0]
-        pos = self.position_embedding(p, pmasks)
+        transformer_src = p
+        transformer_pmasks = pmasks
+        if self.parity_transformer_src_hw is not None and tuple(transformer_src.shape[-2:]) != self.parity_transformer_src_hw:
+            transformer_src = F.interpolate(
+                transformer_src,
+                size=self.parity_transformer_src_hw,
+                mode='bilinear',
+                align_corners=True,
+            )
+            transformer_pmasks = (
+                F.interpolate(
+                    transformer_pmasks[:, None].float(),
+                    size=self.parity_transformer_src_hw,
+                    mode='nearest',
+                )[:, 0].to(torch.bool)
+            )
+        pos = self.position_embedding(transformer_src, transformer_pmasks)
         learned_queries = self.query_embed.weight.unsqueeze(0).expand(images.size(0), -1, -1)
         query_embed, decoder_tgt = self._build_decoder_query_inputs(
             batch_size=images.size(0),
@@ -269,8 +296,8 @@ class model(_BaseTransformerModel):
             }
 
         hs, memory, weights = self.transformer(
-            self.input_proj(p),
-            pmasks,
+            self.input_proj(transformer_src),
+            transformer_pmasks,
             query_embed,
             pos,
             tgt_mask=dn_tgt_mask,

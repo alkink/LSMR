@@ -82,6 +82,10 @@
         "condlstr_mask_downscale": 1,
         "condlstr_score_thresh": 0.3,
         "condlstr_fusion_mode": "product",
+        "parity_transformer_src_hw": [
+            24,
+            42
+        ],
         "parity_backbone": "stdc_res34",
         "parity_backbone_pretrained": true,
         "dn_lane_num_queries": 8,
