@@ -188,7 +188,8 @@ def train(training_dbs, validation_db, start_iter=0, freeze=False, use_prefetch=
     with stdout_to_tqdm() as save_stdout:
         for iteration in metric_logger.log_every(tqdm(range(start_iter + 1, max_iteration + 1),
                                                       file=save_stdout, ncols=67),
-                                                 print_freq=10, header=header):
+                                                 print_freq=10, header=header,
+                                                 start_index=start_iter, total=max_iteration):
 
             if use_prefetch:
                 training = pinned_training_queue.get(block=True)

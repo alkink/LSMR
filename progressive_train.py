@@ -225,7 +225,9 @@ print(f"Snapshot her {system_configs.snapshot} iter'da kaydediliyor: {snapshot_d
 with stdout_to_tqdm() as save_stdout:
     for iteration in metric_logger.log_every(
         tqdm(range(start_iter + 1, max_iter + 1), file=save_stdout, ncols=67),
-        print_freq=10
+        print_freq=10,
+        start_index=start_iter,
+        total=max_iter
     ):
         training = pinned_training_q.get(block=True)
         save     = bool(display and iteration % display == 0)
